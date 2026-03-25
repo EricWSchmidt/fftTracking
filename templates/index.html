@@ -1,0 +1,2062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPT Multi-Frequency Phase Encoder / Decoder</title>
+<style>
+  /* ── Base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0e0e14;
+    color: #d0d8e8;
+    font-family: 'Consolas','Courier New',monospace;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 1.1rem; color: #7fcfff; margin-bottom: 2px; }
+  h2 { font-size: 0.9rem; color: #a0c8f0; margin: 6px 0 3px; border-bottom: 1px solid #2a304a; padding-bottom: 2px; }
+  h3 { font-size: 0.8rem; color: #88a8cc; margin: 4px 0 2px; }
+
+  /* ── Layout ── */
+  #app {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    padding: 8px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  #topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #161822;
+    border: 1px solid #2a3050;
+    border-radius: 6px;
+    padding: 6px 12px;
+  }
+  .panel {
+    background: #13151f;
+    border: 1px solid #222840;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* ── Video / Image displays ── */
+  .vid-wrap {
+    position: relative;
+    background: #050508;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #1e2840;
+  }
+  .vid-wrap img, .vid-wrap video {
+    width: 100%;
+    display: block;
+    image-rendering: pixelated;
+  }
+  .vid-label {
+    position: absolute;
+    top: 4px; left: 6px;
+    font-size: 0.7rem;
+    background: rgba(0,0,0,0.65);
+    color: #88ccff;
+    padding: 1px 5px;
+    border-radius: 3px;
+    pointer-events: none;
+  }
+
+  /* ArUco corner overlay canvas */
+  #aruco-cam-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  /* Euler angle gauges in ArUco pose panel */
+  .euler-gauges {
+    margin-top: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .euler-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.65rem;
+  }
+  .euler-lbl { color: #507060; width: 46px; flex-shrink: 0; }
+  .euler-track {
+    flex: 1;
+    height: 5px;
+    background: #1a2030;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .euler-tick {
+    position: absolute; top: 0; bottom: 0;
+    left: 50%; width: 1px; background: #2a3a50;
+  }
+  .euler-fill {
+    position: absolute; top: 0; height: 100%;
+    border-radius: 3px;
+    transition: left .1s, width .1s;
+  }
+  .euler-val { color: #70d890; font-variant-numeric: tabular-nums; min-width: 45px; text-align: right; }
+
+  /* ── Settings grid ── */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 4px 8px;
+    align-items: center;
+  }
+  .settings-grid label { color: #8898b8; white-space: nowrap; }
+  .settings-grid input[type=range] {
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: #2a3050;
+    outline: none;
+    cursor: pointer;
+    width: 100%;
+  }
+  .settings-grid input[type=range]::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #5090e0;
+    cursor: pointer;
+  }
+  .settings-grid select {
+    background: #1e2438;
+    color: #c0d0f0;
+    border: 1px solid #3a4870;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .settings-grid input[type=text] {
+    background: #1e2438;
+    color: #c0d0f0;
+    border: 1px solid #3a4870;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    width: 100%;
+  }
+  .val-label { color: #60a0e0; min-width: 44px; text-align: right; font-size: 0.8rem; }
+  .toggle-btn {
+    background: #1e2848;
+    color: #88aadd;
+    border: 1px solid #3a5080;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: background 0.2s;
+  }
+  .toggle-btn:hover { background: #2a3a60; }
+  .toggle-btn.active { background: #1a5020; color: #60e090; border-color: #2a7040; }
+
+  /* ── Decoder output ── */
+  #decoded-box {
+    background: #0a0c14;
+    border: 1px solid #1e3050;
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-height: 60px;
+  }
+  #decoded-bytes {
+    word-break: break-all;
+    color: #6898d0;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    margin-bottom: 4px;
+  }
+  #decoded-ascii {
+    font-size: 1.05rem;
+    letter-spacing: 1px;
+    color: #b0e0ff;
+  }
+  #correct-banner {
+    display: none;
+    margin-top: 4px;
+    padding: 4px 10px;
+    background: #0d3a18;
+    border: 1px solid #1a7030;
+    border-radius: 4px;
+    color: #50e080;
+    font-size: 0.9rem;
+    text-align: center;
+  }
+
+  /* ── Guidance ── */
+  #guidance-list {
+    list-style: none;
+    padding: 0;
+  }
+  #guidance-list li {
+    background: #0f1828;
+    border-left: 3px solid #3a6080;
+    margin: 3px 0;
+    padding: 4px 8px;
+    color: #a0c8e8;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    border-radius: 0 4px 4px 0;
+  }
+  #guidance-list li.crit { border-color: #d04040; color: #f08888; }
+  #guidance-list li.ok   { border-color: #40a050; color: #70e090; }
+
+  /* ── SNR bars ── */
+  #snr-bars { display: flex; gap: 3px; align-items: flex-end; height: 40px; margin: 2px 0; }
+  .snr-bar-wrap { display: flex; flex-direction: column; align-items: center; flex: 1; }
+  .snr-bar {
+    width: 100%;
+    border-radius: 2px 2px 0 0;
+    transition: height 0.3s;
+    min-height: 2px;
+  }
+  .snr-label { font-size: 0.6rem; color: #607090; }
+
+  /* ── Phase table ── */
+  #phase-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+  #phase-table th, #phase-table td {
+    padding: 2px 4px;
+    border-bottom: 1px solid #1a2030;
+    text-align: right;
+  }
+  #phase-table th { color: #607090; text-align: left; }
+  #phase-table td:first-child { text-align: left; }
+
+  /* ── Sync indicator ── */
+  #sync-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #404050;
+    display: inline-block;
+    margin-right: 6px;
+    transition: background 0.4s;
+  }
+  #sync-dot.active { background: #30c060; box-shadow: 0 0 6px #30c060; }
+
+  /* ── Button ── */
+  .btn {
+    background: #1e3860;
+    color: #80b0e8;
+    border: 1px solid #3060a0;
+    border-radius: 5px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.82rem;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #254a80; }
+  .btn.danger { background: #3c1818; color: #e08080; border-color: #703030; }
+
+  /* ── Status bar ── */
+  #statusbar {
+    grid-column: 1 / -1;
+    font-size: 0.72rem;
+    color: #4a6080;
+    padding: 2px 8px;
+    display: flex;
+    gap: 16px;
+  }
+
+  /* ── Camera pose card ── */
+  #pose-card {
+    background: #0c101c;
+    border: 1px solid #1e2d50;
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  #pose-compass {
+    width: 76px; height: 76px;
+    display: block;
+  }
+  .pose-rows { display: flex; flex-direction: column; gap: 3px; }
+  .pose-row {
+    display: flex; gap: 6px; align-items: center;
+    font-size: 0.72rem;
+  }
+  .pose-row .plabel { color: #507090; min-width: 72px; }
+  .pose-row .pval   { color: #90c8f0; font-weight: bold; min-width: 60px; }
+  .pose-bar-track {
+    flex: 1; height: 6px;
+    background: #1a2338;
+    border-radius: 3px;
+    position: relative;
+    overflow: visible;
+  }
+  .pose-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s, background 0.3s;
+  }
+  .pose-bar-centre {
+    position: absolute;
+    left: 50%; top: -1px;
+    width: 2px; height: 8px;
+    background: #304060;
+    border-radius: 1px;
+  }
+  .pose-quality {
+    grid-column: 1 / -1;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-align: center;
+  }
+  .pq-good     { background: #0d2d18; color: #50d080; border: 1px solid #1a6030; }
+  .pq-moderate { background: #2d2208; color: #d09030; border: 1px solid #6a4810; }
+  .pq-poor     { background: #2d0e0e; color: #e05050; border: 1px solid #6a2020; }
+  .pq-unknown  { background: #1a1e2c; color: #607080; border: 1px solid #2a3050; }
+
+  /* ── 3-D pose viewport ── */
+  #pose-3d-wrap {
+    grid-column: 1 / -1;
+    background: #06080f;
+    border: 1px solid #162030;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  #pose-3d-canvas {
+    display: block;
+    width: 100%;
+    height: 220px;
+    cursor: grab;
+  }
+  #pose-3d-canvas:active { cursor: grabbing; }
+  #pose-3d-legend {
+    position: absolute;
+    top: 4px; left: 6px;
+    font-size: 0.65rem;
+    color: #2a4060;
+    pointer-events: none;
+    line-height: 1.5;
+  }
+
+  /* ── QR vs Pilot comparison strip ── */
+  #qr-compare {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 0.67rem;
+  }
+  .qr-panel {
+    background: #090d18;
+    border: 1px solid #1a2a40;
+    border-radius: 4px;
+    padding: 5px 8px;
+  }
+  .qr-panel-title {
+    font-size: 0.69rem; font-weight: bold;
+    margin-bottom: 3px; color: #6090b0;
+    border-bottom: 1px solid #1a2a40;
+    padding-bottom: 2px;
+  }
+  #qr-pose-panel { border-color: #1e4020; }
+  #qr-pose-panel .qr-panel-title { color: #70b850; }
+  .qr-metric { color: #507060; margin: 1px 0; }
+  .qr-metric span { color: #90d860; font-weight: bold; }
+  .pilot-cmp-panel .qr-panel-title { color: #5090d0; }
+  .pilot-cmp-panel .qr-metric { color: #404870; }
+  .pilot-cmp-panel .qr-metric span { color: #70b8e8; font-weight: bold; }
+  .qr-detecting { color: #604040; font-style: italic; font-size: 0.64rem; padding: 3px 0; }
+
+  /* responsive */
+  @media (max-width: 860px) {
+    #app { grid-template-columns: 1fr; }
+    #encoder-panel { position: static; max-height: none; }
+  }
+
+  /* ── Sticky encoder panel ── */
+  #encoder-panel {
+    position: sticky;
+    top: 8px;
+    align-self: start;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #2a3a60 transparent;
+    scrollbar-gutter: stable;  /* prevent width shift when scrollbar appears */
+  }
+  #encoder-panel::-webkit-scrollbar { width: 5px; }
+  #encoder-panel::-webkit-scrollbar-thumb { background: #2a3a60; border-radius: 3px; }
+
+  /* Decoder panel scrolls normally; give page room to scroll */
+  #decoder-panel { min-height: 0; }
+
+  /* ArUco decode toggle switch */
+  .aruco-toggle-wrap {
+    position: relative; display: inline-block;
+    width: 36px; height: 18px; cursor: pointer;
+  }
+  .aruco-toggle-wrap input { opacity: 0; width: 0; height: 0; }
+  .aruco-toggle-slider {
+    position: absolute; inset: 0;
+    background: #1a2a40; border-radius: 18px;
+    transition: background 0.2s;
+  }
+  .aruco-toggle-slider:before {
+    content: ''; position: absolute;
+    width: 12px; height: 12px; left: 3px; bottom: 3px;
+    background: #3a5070; border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .aruco-toggle-wrap input:checked + .aruco-toggle-slider { background: #1a4028; }
+  .aruco-toggle-wrap input:checked + .aruco-toggle-slider:before {
+    transform: translateX(18px); background: #50d080;
+  }
+
+  /* ArUco decode section */
+  #aruco-decode-section {
+    background: #040810;
+    border: 1px solid #163020;
+    border-radius: 5px;
+    padding: 6px 10px;
+    margin: 4px 0;
+  }
+  /* ── Frequency bins section ── */
+  #freq-bins-section {
+    background: #060c18;
+    border: 1px solid #163020;
+    border-radius: 5px;
+    padding: 6px 10px;
+    margin: 4px 0;
+  }
+  .freq-row {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-bottom: 2px;
+    font-size: 0.68rem;
+  }
+  .freq-row label {
+    color: #507070;
+    min-width: 26px;
+  }
+  .freq-row input[type=number] {
+    width: 42px;
+    background: #101828;
+    color: #8de8a8;
+    border: 1px solid #253050;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.68rem;
+    font-family: inherit;
+    -moz-appearance: textfield;
+  }
+  .freq-row input[type=number]::-webkit-outer-spin-button,
+  .freq-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .freq-row .freq-sep { color: #304050; font-size: 0.65rem; }
+  /* ── Video background section ── */
+  #vid-bg-section {
+    background: #060c18;
+    border: 1px solid #1a2840;
+    border-radius: 5px;
+    padding: 6px 10px;
+    margin: 4px 0;
+  }
+  .vid-bg-file-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 5px;
+  }
+  #vid-bg-file {
+    flex: 1;
+    background: #101828;
+    color: #8898b8;
+    border: 1px solid #253050;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.72rem;
+    font-family: inherit;
+  }
+  #vid-bg-status {
+    font-size: 0.68rem;
+    color: #507070;
+    margin-bottom: 4px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══════════════════  TOP BAR  ═══════════════════ -->
+  <div id="topbar">
+    <h1>⚡ CPT Multi-Frequency Phase Encoder / Decoder</h1>
+    <span id="sync-dot"></span>
+    <span id="fps-label" style="color:#608080;font-size:0.75rem;">-- fps</span>
+    <span style="flex:1"></span>
+    <span style="color:#405070;font-size:0.72rem;">Signal → Camera → 2-D FFT → Phase → Bytes → ASCII</span>
+  </div>
+
+  <!-- ═══════════════════  ENCODER PANEL  ═══════════════════ -->
+  <div class="panel" id="encoder-panel">
+    <h2>📡 Encoder</h2>
+
+    <!-- signal + fft side-by-side from server -->
+    <div class="vid-wrap">
+      <img id="enc-stream" src="/encoder_stream" alt="encoder stream">
+      <div class="vid-label">LEFT: Signal Spatial Domain &nbsp;|&nbsp; RIGHT: 2-D FFT (zoomed)</div>
+    </div>
+
+    <h2>Encoder Settings</h2>
+    <div class="settings-grid">
+      <label>Message</label>
+      <input type="text" id="enc-message" value="Google.com" placeholder="message to encode" style="grid-column:2/4">
+
+      <label>Window</label>
+      <select id="enc-window" style="grid-column:2/4">
+        <option value="hann" selected>Hann</option>
+        <option value="blackman">Blackman</option>
+        <option value="none">None (rectangular)</option>
+      </select>
+
+      <label>Symbol duration</label>
+      <input type="range" id="enc-sym-frames" min="15" max="300" step="5" value="90">
+      <span class="val-label" id="enc-sym-frames-val">90 fr</span>
+    </div>
+    <button class="btn" id="enc-apply-btn" style="width:100%;margin-top:4px">Apply</button>
+
+    <!-- ── Frequency Bins ── -->
+    <h2>📊 Frequency Bins</h2>
+    <div id="freq-bins-section">
+      <div style="display:flex;gap:6px;margin-bottom:4px">
+        <div style="flex:1">
+          <div style="font-size:0.7rem;color:#507070;margin-bottom:3px">Data Carriers (8)</div>
+          <div id="data-freq-grid">
+            <!-- populated by JS -->
+          </div>
+        </div>
+        <div style="flex:0 0 auto">
+          <div style="font-size:0.7rem;color:#507070;margin-bottom:3px">Pilots (4)</div>
+          <div id="pilot-freq-grid">
+            <!-- populated by JS -->
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button class="btn" id="freq-apply-btn" style="flex:1">Apply Bins</button>
+        <button class="btn" id="freq-reset-btn" style="flex:0 0 auto;background:#1a1a2e">Reset</button>
+      </div>
+    </div>
+
+    <!-- ── Video background ── -->
+    <h2>🎬 Video Background</h2>
+    <div id="vid-bg-section">
+      <div class="vid-bg-file-row">
+        <input type="file" id="vid-bg-file" accept="video/*">
+        <button class="btn" id="vid-bg-upload-btn">Upload</button>
+      </div>
+      <div id="vid-bg-status">No video loaded</div>
+      <div class="settings-grid">
+        <label>Enable</label>
+        <label class="aruco-toggle-wrap" title="Play video behind signal on a loop">
+          <input type="checkbox" id="vid-bg-enable">
+          <span class="aruco-toggle-slider"></span>
+        </label>
+        <span></span>
+
+        <label>Signal opacity</label>
+        <input type="range" id="vid-opacity-range" min="0" max="100" step="1" value="100">
+        <span class="val-label" id="vid-opacity-val">100%</span>
+      </div>
+    </div>
+
+    <!-- Encoder state / bytes table -->
+    <h3>Current Symbol State</h3>
+    <div id="enc-state" style="font-size:0.72rem;color:#6080a0;line-height:1.6;">Loading…</div>
+
+    <!-- Camera pose card -->
+    <h3>📐 Camera Pose — Pilots &amp; QR</h3>
+    <div id="pose-card">
+      <!-- SVG compass showing rotation -->
+      <svg id="pose-compass" viewBox="0 0 80 80">
+        <!-- ring -->
+        <circle cx="40" cy="40" r="35" fill="none" stroke="#1e2d50" stroke-width="2"/>
+        <!-- tick marks -->
+        <g id="pose-ticks" stroke="#2a3a60" stroke-width="1"></g>
+        <!-- rotation arrow (updated by JS) -->
+        <line id="pose-arrow" x1="40" y1="40" x2="40" y2="10"
+              stroke="#50a0e0" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- centre dot -->
+        <circle cx="40" cy="40" r="3" fill="#50a0e0"/>
+        <!-- labels -->
+        <text x="40" y="8" text-anchor="middle" fill="#607090" font-size="7">0°</text>
+        <text x="74" y="44" text-anchor="end"  fill="#607090" font-size="7">90°</text>
+        <text x="40" y="77" text-anchor="middle" fill="#607090" font-size="7">180°</text>
+        <text x="6"  y="44" text-anchor="start" fill="#607090" font-size="7">−90°</text>
+        <!-- rotation value text -->
+        <text id="pose-rot-text" x="40" y="52" text-anchor="middle"
+              fill="#90c8f0" font-size="8" font-weight="bold">0.0°</text>
+      </svg>
+
+      <div class="pose-rows">
+        <!-- Zoom bar -->
+        <div class="pose-row">
+          <span class="plabel">Zoom scale</span>
+          <span class="pval" id="pose-zoom-val">1.000×</span>
+          <div class="pose-bar-track">
+            <div class="pose-bar-centre"></div>
+            <div class="pose-bar-fill" id="pose-zoom-bar" style="width:50%;background:#5090d0"></div>
+          </div>
+        </div>
+        <!-- Translation X -->
+        <div class="pose-row">
+          <span class="plabel">Shift X</span>
+          <span class="pval" id="pose-tx-val">0.0 bins</span>
+          <div class="pose-bar-track">
+            <div class="pose-bar-centre"></div>
+            <div class="pose-bar-fill" id="pose-tx-bar" style="width:50%;background:#a060d0"></div>
+          </div>
+        </div>
+        <!-- Translation Y -->
+        <div class="pose-row">
+          <span class="plabel">Shift Y</span>
+          <span class="pval" id="pose-ty-val">0.0 bins</span>
+          <div class="pose-bar-track">
+            <div class="pose-bar-centre"></div>
+            <div class="pose-bar-fill" id="pose-ty-bar" style="width:50%;background:#a060d0"></div>
+          </div>
+        </div>
+        <!-- Keystone -->
+        <div class="pose-row">
+          <span class="plabel">Keystone</span>
+          <span class="pval" id="pose-kst-val">0.000 bins</span>
+          <div class="pose-bar-track">
+            <div class="pose-bar-fill" id="pose-kst-bar" style="width:0%;background:#d06040"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pose-quality pq-unknown" id="pose-quality-badge">Quality: unknown</div>
+
+      <!-- QR vs Pilot comparison strip -->
+      <div id="qr-compare">
+        <div id="qr-pose-panel" class="qr-panel">
+          <div class="qr-panel-title">� ArUco Pose (Ground Truth)</div>
+          <div id="qr-not-detected" class="qr-detecting">No ArUco marker detected</div>
+          <div id="qr-pose-data" style="display:none">
+            <div class="qr-metric">Rotation: <span id="qr-rot">—</span></div>
+            <div class="qr-metric">Zoom: <span id="qr-zoom">—</span></div>
+            <div class="qr-metric">Shift X: <span id="qr-tx">—</span></div>
+            <div class="qr-metric">Shift Y: <span id="qr-ty">—</span></div>
+            <div class="qr-metric">Keystone: <span id="qr-kst">—</span></div>
+            <div class="qr-metric">Apparent size: <span id="qr-size-px">—</span></div>
+            <div class="qr-metric" id="qr-3d-row" style="display:none">
+              X: <span id="qr-x3d">—</span>
+              Y: <span id="qr-y3d">—</span>
+              Z: <span id="qr-z3d">—</span>
+            </div>
+            <!-- Euler angle gauges (from solvePnP) -->
+            <div id="qr-euler-row" class="euler-gauges" style="display:none">
+              <div class="euler-row">
+                <span class="euler-lbl">Yaw</span>
+                <div class="euler-track"><div class="euler-tick"></div><div class="euler-fill" id="euler-yaw-fill" style="background:#a78bfa"></div></div>
+                <span class="euler-val" id="euler-yaw-val">—</span>
+              </div>
+              <div class="euler-row">
+                <span class="euler-lbl">Pitch</span>
+                <div class="euler-track"><div class="euler-tick"></div><div class="euler-fill" id="euler-pitch-fill" style="background:#34d399"></div></div>
+                <span class="euler-val" id="euler-pitch-val">—</span>
+              </div>
+              <div class="euler-row">
+                <span class="euler-lbl">Roll</span>
+                <div class="euler-track"><div class="euler-tick"></div><div class="euler-fill" id="euler-roll-fill" style="background:#fb923c"></div></div>
+                <span class="euler-val" id="euler-roll-val">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="qr-panel pilot-cmp-panel">
+          <div class="qr-panel-title">📡 Pilot FFT Pose</div>
+          <div class="qr-metric">Rotation: <span id="pilot-rot-cmp">—</span></div>
+          <div class="qr-metric">Zoom: <span id="pilot-zoom-cmp">—</span></div>
+          <div class="qr-metric">Shift X: <span id="pilot-tx-cmp">—</span></div>
+          <div class="qr-metric">Shift Y: <span id="pilot-ty-cmp">—</span></div>
+          <div class="qr-metric">Keystone: <span id="pilot-kst-cmp">—</span></div>
+          <div class="qr-metric">Quality: <span id="pilot-qual-cmp">—</span></div>
+        </div>
+      </div>
+
+      <!-- Full-width 3-D view -->
+      <div id="pose-3d-wrap">
+        <canvas id="pose-3d-canvas"></canvas>
+        <div id="pose-3d-legend">
+          ■ screen &nbsp; ▦ pilot cam (blue) &nbsp; ▦ ArUco cam (amber) &nbsp; drag to orbit
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════  DECODER PANEL  ═══════════════════ -->
+  <div class="panel" id="decoder-panel">
+    <h2>🎥 Decoder (Webcam → FFT → Decode)</h2>
+
+    <!-- Top row: webcam | fft -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+      <div class="vid-wrap">
+        <video id="webcam-video" autoplay playsinline muted></video>
+        <canvas id="aruco-cam-overlay"></canvas>
+        <div class="vid-label">Webcam — ArUco overlay</div>
+      </div>
+      <div class="vid-wrap">
+        <img id="fft-display" src="" alt="FFT" style="min-height:180px;background:#050508;">
+        <div class="vid-label">2-D FFT (annotated)</div>
+      </div>
+    </div>
+
+    <!-- Camera controls -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn" id="start-cam-btn">Start Webcam</button>
+      <button class="btn danger" id="stop-cam-btn">Stop</button>
+      <select id="cam-select" style="flex:1;background:#1e2438;color:#c0d0f0;border:1px solid #3a4870;border-radius:4px;padding:2px 4px;font-family:inherit;font-size:0.8rem;"></select>
+    </div>
+
+    <!-- Decoded output -->
+    <h2>🔍 Decoded Output</h2>
+    <div id="decoded-box">
+      <div id="decoded-bytes">—</div>
+      <div id="decoded-ascii">—</div>
+      <div id="correct-banner">✅ Correct sentinels detected — string decoded!</div>
+    </div>
+
+    <!-- Phase table -->
+    <h3>Per-Carrier Phases &amp; SNR</h3>
+    <div id="snr-bars"></div>
+    <table id="phase-table">
+      <thead><tr>
+        <th>Carrier</th><th>Meas Phase</th><th>Byte</th><th>ASCII</th><th>SNR dB</th>
+      </tr></thead>
+      <tbody id="phase-tbody"></tbody>
+    </table>
+
+    <!-- Pilot info -->
+    <h3>Pilot Diagnostics</h3>
+    <div id="pilot-info" style="font-size:0.72rem;color:#607090;line-height:1.7;"></div>
+
+    <!-- ArUco-Referenced Decode section -->
+    <div id="aruco-decode-section">
+      <div style="display:flex;align-items:center;gap:8px;margin:6px 0 4px">
+        <h3 style="margin:0;font-size:0.82rem;color:#70b870">🔭 ArUco-Referenced Decode</h3>
+        <label class="aruco-toggle-wrap" title="Warp signal panel using ArUco position, then FFT-decode">
+          <input type="checkbox" id="aruco-decode-toggle">
+          <span class="aruco-toggle-slider"></span>
+        </label>
+        <span id="aruco-decode-status" style="font-size:0.68rem;color:#507070">Off</span>
+      </div>
+      <div id="aruco-decode-panel" style="display:none">
+        <div id="aruco-decode-no-marker" style="font-size:0.72rem;color:#506060;display:none">
+          Waiting for ArUco marker…
+        </div>
+        <div id="aruco-decode-content" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px">
+            <div>
+              <div style="font-size:0.65rem;color:#507090;margin-bottom:2px">Warped signal</div>
+              <img id="aruco-warp-img" style="width:100%;image-rendering:pixelated;border:1px solid #1a2a40;border-radius:3px" alt="warped frame">
+            </div>
+            <div>
+              <div style="font-size:0.65rem;color:#507090;margin-bottom:2px">ArUco FFT</div>
+              <img id="aruco-fft-img" style="width:100%;image-rendering:pixelated;border:1px solid #1a2a40;border-radius:3px" alt="aruco fft">
+            </div>
+          </div>
+          <div id="aruco-decoded-bytes" style="font-size:0.7rem;color:#90b8e0;font-family:monospace"></div>
+          <div id="aruco-decoded-ascii" style="font-size:0.7rem;font-family:monospace;margin-top:1px"></div>
+          <div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:3px" id="aruco-snr-bars" class="snr-bars"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global phase offset indicator -->
+    <div style="font-size:0.72rem;color:#608080;margin-top:2px">
+      Auto phase offset: <span id="auto-phase-offset" style="color:#60c0e0">0.0°</span>
+    </div>
+
+    <!-- Settings -->
+    <h2>⚙️ Decoder Settings</h2>
+    <div class="settings-grid">
+      <label>Window</label>
+      <select id="dec-window" style="grid-column:2/4">
+        <option value="hann" selected>Hann</option>
+        <option value="blackman">Blackman</option>
+        <option value="none">None (rectangular)</option>
+      </select>
+
+      <label>Phase Offset</label>
+      <input type="range" id="dec-phase-offset" min="-180" max="180" step="1" value="0">
+      <span class="val-label" id="dec-phase-offset-val">0°</span>
+
+      <label>Temporal Avg</label>
+      <input type="range" id="dec-temporal" min="1" max="30" step="1" value="5">
+      <span class="val-label" id="dec-temporal-val">5 fr</span>
+
+      <label>Pilot Search</label>
+      <input type="range" id="dec-pilot-r" min="1" max="15" step="1" value="6">
+      <span class="val-label" id="dec-pilot-r-val">6 bins</span>
+
+      <label>Mag Threshold</label>
+      <input type="range" id="dec-thresh" min="1" max="50" step="1" value="5">
+      <span class="val-label" id="dec-thresh-val">5%</span>
+
+      <label>FFT Zoom</label>
+      <input type="range" id="dec-zoom" min="8" max="64" step="1" value="36">
+      <span class="val-label" id="dec-zoom-val">36 bins</span>
+
+      <label>Redundancy</label>
+      <select id="dec-redundancy" style="grid-column:2/4">
+        <option value="none" selected>None (8 independent carriers)</option>
+        <option value="pairs">Pairs (4 bytes × 2 carriers each)</option>
+        <option value="quads">Quads (2 bytes × 4 carriers each)</option>
+        <option value="all8">All-8 (1 byte × 8 carriers)</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn toggle-btn active" id="dec-geo-btn">Geo Correction: ON</button>
+      <button class="btn" id="dec-apply-btn" style="flex:1">Apply Settings</button>
+    </div>
+
+    <!-- Per-carrier phase nudge -->
+    <h3>Per-Carrier Phase Nudge</h3>
+    <div id="nudge-controls" class="settings-grid"></div>
+
+    <!-- Guidance -->
+    <h2>💡 Guidance</h2>
+    <ul id="guidance-list"><li>Waiting for signal…</li></ul>
+
+    <!-- Hidden canvas for frame capture -->
+    <canvas id="capture-canvas" style="display:none"></canvas>
+  </div>
+
+  <div id="statusbar">
+    <span>Encoder: <span id="status-enc">—</span></span>
+    <span>Decoder: <span id="status-dec">—</span></span>
+    <span>Last decode: <span id="status-time">—</span></span>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════    3-D Camera Pose Renderer  (software rasteriser, no dependencies)
+═══════════════════════════════════════════════════════════════════════ */
+class Pose3D {
+  constructor(canvas) {
+    this.cv  = canvas;
+    this.g   = canvas.getContext('2d');
+    // Orbit state (user-draggable)
+    this.orbitYaw   =  25;   // degrees, horizontal orbit
+    this.orbitPitch = -22;   // degrees, vertical orbit
+    this.orbitDist  =  7.5;  // distance of observer from scene origin
+    this._drag      = null;
+    this._lastPose   = {};
+    this._lastQrPose = {};
+    this._addOrbitControls();
+    // Continuous render loop — runs at screen refresh rate (like Three.js animate)
+    this._renderLoop();
+  }
+
+  // ── continuous 60fps render loop ──
+  _renderLoop() {
+    this._render();
+    requestAnimationFrame(() => this._renderLoop());
+  }
+
+  // ── vector helpers ──
+  _v(x,y,z){ return {x,y,z}; }
+  _add(a,b){ return {x:a.x+b.x, y:a.y+b.y, z:a.z+b.z}; }
+  _sub(a,b){ return {x:a.x-b.x, y:a.y-b.y, z:a.z-b.z}; }
+  _mul(a,s){ return {x:a.x*s,   y:a.y*s,   z:a.z*s};   }
+  _dot(a,b){ return a.x*b.x+a.y*b.y+a.z*b.z; }
+  _cross(a,b){ return {x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x}; }
+  _len(a)  { return Math.sqrt(this._dot(a,a)); }
+  _norm(a) { const l=this._len(a); return l<1e-9?a:this._mul(a,1/l); }
+
+  // ── build view basis from orbit angles ──
+  _viewBasis() {
+    const ya = this.orbitYaw   * Math.PI / 180;
+    const pa = this.orbitPitch * Math.PI / 180;
+    // orbit eye position
+    const ex = this.orbitDist * Math.sin(ya) * Math.cos(pa);
+    const ey = this.orbitDist * Math.sin(pa);
+    const ez = this.orbitDist * Math.cos(ya) * Math.cos(pa);
+    const eye    = this._v(ex, ey, ez);
+    const center = this._v(0, 0, 1.5);        // scene look-at point
+    const up_w   = this._v(0, 1, 0);
+    const fwd    = this._norm(this._sub(center, eye));
+    const rgt    = this._norm(this._cross(fwd, up_w));
+    const upv    = this._cross(rgt, fwd);
+    return { eye, fwd, rgt, upv };
+  }
+
+  // ── project world → canvas pixel; returns null if behind eye ──
+  _proj(p, basis) {
+    const { eye, fwd, rgt, upv } = basis;
+    const d  = this._sub(p, eye);
+    const vx = this._dot(d, rgt);
+    const vy = this._dot(d, upv);
+    const vz = this._dot(d, fwd);
+    if (vz < 0.05) return null;
+    const W = this.cv.width, H = this.cv.height;
+    const f = 1.5;   // field-of-view factor
+    return [
+      W/2 + (f * vx / vz) * H/2,
+      H/2 - (f * vy / vz) * H/2,
+      vz
+    ];
+  }
+
+  // ── drawing primitives ──
+  _line(b, p1, p2, col, lw=1, dash=[], alpha=1) {
+    const a1 = this._proj(p1, b), a2 = this._proj(p2, b);
+    if (!a1||!a2) return;
+    const g = this.g;
+    g.save(); g.globalAlpha=alpha;
+    g.strokeStyle=col; g.lineWidth=lw; g.setLineDash(dash);
+    g.beginPath(); g.moveTo(a1[0],a1[1]); g.lineTo(a2[0],a2[1]); g.stroke();
+    g.restore();
+  }
+
+  _poly(b, pts, fill, stroke, sw=1, alpha=1) {
+    const ps = pts.map(p => this._proj(p,b));
+    if (ps.some(p=>!p)) return;
+    const g = this.g;
+    g.save(); g.globalAlpha=alpha;
+    g.beginPath();
+    g.moveTo(ps[0][0],ps[0][1]);
+    for(let i=1;i<ps.length;i++) g.lineTo(ps[i][0],ps[i][1]);
+    g.closePath();
+    if(fill)  { g.fillStyle=fill;   g.fill(); }
+    if(stroke){ g.strokeStyle=stroke; g.lineWidth=sw; g.stroke(); }
+    g.restore();
+  }
+
+  _text(b, p, txt, col='#607090', sz=9, dx=4, dy=-3) {
+    const s = this._proj(p,b);
+    if(!s) return;
+    const g=this.g; g.save();
+    g.fillStyle=col; g.font=`${sz}px monospace`;
+    g.fillText(txt, s[0]+dx, s[1]+dy);
+    g.restore();
+  }
+
+  // ── apply roll to a vector around an axis (Rodrigues) ──
+  _rotVec(v, axis, deg) {
+    const r = deg*Math.PI/180, c=Math.cos(r), s=Math.sin(r);
+    const k = this._norm(axis);
+    return this._add(
+      this._add(this._mul(v,c), this._mul(this._cross(k,v),s)),
+      this._mul(k, this._dot(k,v)*(1-c))
+    );
+  }
+
+  // ── orbit mouse controls ──
+  _addOrbitControls() {
+    const cv = this.cv;
+    cv.addEventListener('mousedown',  e => { this._drag = {x:e.clientX, y:e.clientY}; });
+    cv.addEventListener('mousemove',  e => {
+      if (!this._drag) return;
+      this.orbitYaw   -= (e.clientX - this._drag.x) * 0.4;
+      this.orbitPitch += (e.clientY - this._drag.y) * 0.4;
+      this.orbitPitch  = Math.max(-80, Math.min(85, this.orbitPitch));
+      this._drag = {x:e.clientX, y:e.clientY};
+      this.update(this._lastPose || {}, this._lastQrPose || {});
+    });
+    cv.addEventListener('mouseup',   () => this._drag = null);
+    cv.addEventListener('mouseleave',() => this._drag = null);
+    cv.addEventListener('wheel', e => {
+      e.preventDefault();
+      this.orbitDist = Math.max(3, Math.min(18, this.orbitDist + e.deltaY*0.01));
+      this.update(this._lastPose || {}, this._lastQrPose || {});
+    }, {passive:false});
+    // Touch
+    let _lastTouch = null;
+    cv.addEventListener('touchstart', e => { _lastTouch = e.touches[0]; }, {passive:true});
+    cv.addEventListener('touchmove',  e => {
+      if (!_lastTouch) return;
+      const t = e.touches[0];
+      this.orbitYaw   -= (t.clientX - _lastTouch.clientX) * 0.5;
+      this.orbitPitch += (t.clientY - _lastTouch.clientY) * 0.5;
+      this.orbitPitch  = Math.max(-80, Math.min(85, this.orbitPitch));
+      _lastTouch = t;
+      this.update(this._lastPose || {}, this._lastQrPose || {});
+    }, {passive:true});
+  }
+
+  // ── render one camera body + frustum ──
+  _drawCamBody(b, camPos, lookDir, camRight, camUp, rot, scale, bodyCol, strokeCol, lensCol, label) {
+    const g = this.g, sCT = this._v(0,0,0);
+    const SW=1.5, SH=1.0;
+    // Frustum
+    const fCol = bodyCol.replace('0.18','0.22');
+    for (const sc of [this._v(-SW,SH,0),this._v(SW,SH,0),this._v(-SW,-SH,0),this._v(SW,-SH,0)]) {
+      this._line(b, camPos, sc, fCol, 0.9, [4,3]);
+    }
+    this._line(b, camPos, sCT, strokeCol, 1.2);
+    // Box
+    const cW=0.26, cH=0.18, cD=0.12;
+    const bp = (sx,sy,sz) => this._add(this._add(
+      this._add(camPos,this._mul(camRight,sx)),this._mul(camUp,sy)),this._mul(lookDir,sz));
+    const fTL=bp(-cW,cH,cD), fTR=bp(cW,cH,cD), fBL=bp(-cW,-cH,cD), fBR=bp(cW,-cH,cD);
+    const bkTL=bp(-cW,cH,-cD),bkTR=bp(cW,cH,-cD),bkBL=bp(-cW,-cH,-cD),bkBR=bp(cW,-cH,-cD);
+    this._poly(b,[bkTL,bkTR,bkBR,bkBL],bodyCol,strokeCol,1);
+    this._poly(b,[bkTL,fTL,fBL,bkBL],  bodyCol,strokeCol,1);
+    this._poly(b,[bkTR,fTR,fBR,bkBR],  bodyCol,strokeCol,1);
+    this._poly(b,[bkTL,bkTR,fTR,fTL],  bodyCol,strokeCol,1);
+    this._poly(b,[bkBL,bkBR,fBR,fBL],  bodyCol,strokeCol,1);
+    this._poly(b,[fTL,fTR,fBR,fBL],    lensCol,strokeCol,1.5,0.9);
+    // Up arrow
+    const upTip = this._add(camPos,this._mul(camUp,0.5));
+    this._line(b, camPos, upTip, strokeCol, 1.2);
+    // Label
+    this._text(b, this._add(camPos,this._mul(camUp,0.3)), label, strokeCol, 9);
+    // Roll arc (2D)
+    if (Math.abs(rot) > 0.4) {
+      const cp2 = this._proj(camPos, b);
+      if (cp2) {
+        const arcR=20, start=-Math.PI/2, end=start+rot*Math.PI/180;
+        g.save(); g.strokeStyle=strokeCol; g.lineWidth=1.5; g.setLineDash([]);
+        g.beginPath(); g.arc(cp2[0],cp2[1],arcR,start,end,rot<0); g.stroke();
+        g.restore();
+      }
+    }
+  }
+
+  // ── set new pose data (called from detection loop) ──
+  update(pose, qrPose = {}) {
+    this._lastPose   = pose;
+    this._lastQrPose = qrPose;
+  }
+
+  // ── actual render (called by _renderLoop at 60fps) ──
+  _render() {
+    const pose   = this._lastPose   || {};
+    const qrPose = this._lastQrPose || {};
+
+    // Resize canvas to match CSS size
+    const W = this.cv.offsetWidth  || 400;
+    const H = this.cv.offsetHeight || 220;
+    if (this.cv.width !== W || this.cv.height !== H) {
+      this.cv.width = W; this.cv.height = H;
+    }
+    const g = this.g;
+    g.clearRect(0,0,W,H);
+    g.fillStyle='#06080f'; g.fillRect(0,0,W,H);
+
+    const rot   = pose.rotation_deg       || 0;
+    const scale = pose.zoom_scale         || 1;
+    const tx    = pose.translation_x      || 0;
+    const ty    = pose.translation_y      || 0;
+    const kst   = pose.keystone_magnitude || 0;
+
+    // Camera position in world space
+    const BASE_DIST = 4.5;
+    const camDist   = BASE_DIST / Math.max(scale, 0.15);
+    const BIN_SCALE = 1/28;   // 1 bin = 1/28 world units
+    const camX      =  tx * BIN_SCALE;
+    const camY      = -ty * BIN_SCALE;
+    const camPos    = this._v(camX, camY, camDist);
+
+    // Camera orientation: look toward screen origin, with roll
+    const lookDir  = this._norm(this._sub(this._v(0,0,0), camPos));
+    const worldUp  = this._v(0,1,0);
+    let   camRight = this._norm(this._cross(lookDir, worldUp));
+    let   camUp    = this._norm(this._cross(camRight, lookDir));
+    // Apply roll around look axis
+    if (Math.abs(rot) > 0.1) {
+      camRight = this._rotVec(camRight, lookDir, rot);
+      camUp    = this._rotVec(camUp,    lookDir, rot);
+    }
+
+    const b = this._viewBasis();   // observer basis
+
+    // ── World axes (small, at origin) ──
+    const O = this._v(0,0,0);
+    this._line(b, O, this._v(0.6,0,0), '#7a3030', 1.5);
+    this._line(b, O, this._v(0,0.6,0), '#307a30', 1.5);
+    this._line(b, O, this._v(0,0,0.6), '#303090', 1.5);
+    this._text(b, this._v(0.65,0,0),   'X', '#a04040', 9);
+    this._text(b, this._v(0,0.65,0),   'Y', '#40a040', 9);
+    this._text(b, this._v(0,0,0.65),   'Z', '#4040b0', 9);
+
+    // ── Screen quad (at z=0, in XY plane) with glow lines from keystone ──
+    const SW=1.5, SH=1.0;
+    const kx = kst*0.12, ky = kst*0.08;  // exaggerate keystone visually
+    const sTL = this._v(-SW+kx,  SH-ky, 0);
+    const sTR = this._v( SW-kx,  SH+ky, 0);
+    const sBL = this._v(-SW-kx, -SH+ky, 0);
+    const sBR = this._v( SW+kx, -SH-ky, 0);
+    const sCT = this._v(0, 0, 0);   // centre
+    // Fill
+    this._poly(b, [sTL,sTR,sBR,sBL], 'rgba(50,90,160,0.12)', null);
+    // Border
+    const screenCol = kst > 3 ? '#a04030' : kst > 1 ? '#907030' : '#2a5090';
+    const screenLW  = kst > 1 ? 2 : 1.5;
+    this._line(b, sTL, sTR, screenCol, screenLW);
+    this._line(b, sTR, sBR, screenCol, screenLW);
+    this._line(b, sBR, sBL, screenCol, screenLW);
+    this._line(b, sBL, sTL, screenCol, screenLW);
+    // Cross-hairs on screen
+    this._line(b, sTL, sBR, '#1a3050', 0.5, [3,4]);
+    this._line(b, sTR, sBL, '#1a3050', 0.5, [3,4]);
+    // Screen normal arrow (pointing toward camera)
+    const sNorm = this._v(0, 0, 0.5);
+    this._line(b, sCT, sNorm, '#1a4060', 1, [2,3]);
+    this._text(b, this._v(0, SH+0.12, 0), 'SIGNAL', '#2d5090', 9);
+
+    // ── View frustum (camera → screen corners, dashed) ──
+    const hue    = 200 + rot * 2;
+    const fCol   = `hsla(${hue},70%,60%,0.28)`;
+    for (const sc of [sTL, sTR, sBL, sBR]) {
+      this._line(b, camPos, sc, fCol, 1, [4,3]);
+    }
+    // Solid line to screen centre (aim line)
+    this._line(b, camPos, sCT, `hsla(${hue},50%,50%,0.55)`, 1.5);
+
+    // ── Camera body (detailed pilot cam) ──
+    const cW=0.28, cH=0.20, cD=0.14;  // half-extents
+    const bp = (sx, sy, sz) => this._add(
+      this._add(
+        this._add(camPos, this._mul(camRight, sx)),
+        this._mul(camUp,  sy)),
+      this._mul(lookDir,  sz)
+    );
+    //  8 corners
+    const fTL=bp(-cW, cH, cD),  fTR=bp( cW, cH, cD);
+    const fBL=bp(-cW,-cH, cD),  fBR=bp( cW,-cH, cD);
+    const bkTL=bp(-cW, cH,-cD), bkTR=bp( cW, cH,-cD);
+    const bkBL=bp(-cW,-cH,-cD), bkBR=bp( cW,-cH,-cD);
+
+    // Depth-sort: back faces first, front last
+    const bodyFill   = 'rgba(70,120,200,0.18)';
+    const bodyStroke = '#3060a0';
+    this._poly(b,[bkTL,bkTR,bkBR,bkBL], bodyFill, bodyStroke, 1);
+    this._poly(b,[bkTL,fTL,fBL,bkBL],   bodyFill, bodyStroke, 1);
+    this._poly(b,[bkTR,fTR,fBR,bkBR],   bodyFill, bodyStroke, 1);
+    this._poly(b,[bkTL,bkTR,fTR,fTL],   bodyFill, bodyStroke, 1);
+    this._poly(b,[bkBL,bkBR,fBR,fBL],   bodyFill, bodyStroke, 1);
+    // Front face = lens (brighter)
+    const lensQ = scale > 1.1 ? 'rgba(100,200,255,0.55)' :
+                  scale < 0.9 ? 'rgba(255,140,80,0.45)'  :
+                                 'rgba(80,180,255,0.38)';
+    this._poly(b,[fTL,fTR,fBR,fBL], lensQ, '#60b0ff', 1.5, 0.9);
+
+    // Roll arc drawn in 2D at the projected camera centre
+    const camP2 = this._proj(camPos, b);
+    if (camP2 && Math.abs(rot) > 0.5) {
+      const arcR  = 22;
+      const start = -Math.PI/2;
+      const end   = start + rot * Math.PI/180;
+      const arcCol= rot > 0 ? '#e0a030' : '#30c0e0';
+      g.save();
+      g.strokeStyle = arcCol; g.lineWidth = 2; g.setLineDash([]);
+      g.beginPath();
+      g.arc(camP2[0], camP2[1], arcR, start, end, rot < 0);
+      g.stroke();
+      // Arrow at end of arc
+      const ang = end + (rot>0?0.2:-0.2);
+      const ax  = camP2[0] + arcR*Math.cos(ang);
+      const ay  = camP2[1] + arcR*Math.sin(ang);
+      const tx0 = camP2[0] + arcR*Math.cos(end);
+      const ty0 = camP2[1] + arcR*Math.sin(end);
+      g.beginPath(); g.moveTo(tx0,ty0); g.lineTo(ax,ay); g.stroke();
+      g.fillStyle=arcCol; g.font='8px monospace';
+      g.fillText((rot>=0?'+':'')+rot.toFixed(1)+'° roll', camP2[0]+arcR+4, camP2[1]-4);
+      g.restore();
+    }
+
+    // Up vector from camera (green arrow showing camera up direction)
+    const upTip = this._add(camPos, this._mul(camUp, 0.55));
+    this._line(b, camPos, upTip, '#30c060', 1.5);
+    this._text(b, upTip, 'UP', '#30c060', 8, 3, -2);
+
+    // Right vector from camera (orange arrow)
+    const rtTip = this._add(camPos, this._mul(camRight, 0.45));
+    this._line(b, camPos, rtTip, '#e08030', 1.2);
+
+    // Camera label
+    const lblPos = this._add(camPos, this._mul(camUp, 0.32));
+    this._text(b, lblPos, 'PILOT', '#60a0e0', 9);
+
+    // Distance dashed line with label
+    this._line(b, camPos, sCT, '#0d2038', 0.8, [2,5]);
+    const mid = this._mul(this._add(camPos, sCT), 0.5);
+    this._text(b, mid, scale.toFixed(3)+'×', '#2a5070', 8);
+
+    // Scale indicator: translation offset line
+    if (Math.abs(camX)>0.05 || Math.abs(camY)>0.05) {
+      const ideal = this._v(0, 0, camDist);
+      this._line(b, ideal, camPos, '#7030a0', 1, [2,3], 0.7);
+      this._text(b, ideal, 'ideal', '#402060', 8, 3, -2);
+    }
+
+    // ── QR camera body (amber/orange) ──
+    if (qrPose && qrPose.detected) {
+      const qRot   = qrPose.rotation_deg       || 0;
+      const qScale = qrPose.zoom_scale         || 1;
+      const qTx    = qrPose.translation_x      || 0;
+      const qTy    = qrPose.translation_y      || 0;
+
+      // Use true 3D position from solvePnP if available; fall back to similarity estimate
+      let qCamPos;
+      if (qrPose.pos3d_z != null) {
+        // tvec in metres, camera space (X right, Y down, Z forward)
+        // Scale to scene units: assume marker ~20cm → scene object ~1 unit wide
+        // Scene unit ≈ 0.2 m (marker width), so divide by ARUCO_PHYSICAL_SIZE_M
+        const SCENE_M = 0.20;   // metres per scene unit
+        const qX3 =  qrPose.pos3d_x / SCENE_M;
+        const qY3 = -qrPose.pos3d_y / SCENE_M;   // OpenCV Y-down → scene Y-up
+        const qZ3 =  qrPose.pos3d_z / SCENE_M;
+        qCamPos = this._v(qX3, qY3, qZ3);
+      } else {
+        const qDist  = BASE_DIST / Math.max(qScale, 0.15);
+        qCamPos = this._v(qTx * BIN_SCALE, -qTy * BIN_SCALE, qDist);
+      }
+
+      const qLook   = this._norm(this._sub(this._v(0,0,0), qCamPos));
+      let   qRgt    = this._norm(this._cross(qLook, worldUp));
+      let   qUp     = this._norm(this._cross(qRgt, qLook));
+      // Use true euler_rz (camera roll) from solvePnP if available
+      const q3dRoll = qrPose.euler_rz != null ? qrPose.euler_rz : qRot;
+      if (Math.abs(q3dRoll) > 0.1) {
+        qRgt = this._rotVec(qRgt, qLook, q3dRoll);
+        qUp  = this._rotVec(qUp,  qLook, q3dRoll);
+      }
+      this._drawCamBody(b, qCamPos, qLook, qRgt, qUp, q3dRoll, qScale,
+        'rgba(200,120,30,0.18)', '#c07820', 'rgba(255,180,60,0.55)', 'QR');
+      // Connecting line between pilot and QR cams (purple dashed)
+      this._line(b, camPos, qCamPos, '#805090', 1, [2,4], 0.6);
+    }
+
+    // Ground-plane grid (5×3, at y=−1.2)
+    const GY=-1.3;
+    for(let xi=-2;xi<=2;xi++) {
+      this._line(b,this._v(xi*0.8,GY,-0.5),this._v(xi*0.8,GY,camDist+0.5),'#0d1520',0.5,[],[],0.6);
+    }
+    for(let zi=0;zi<=Math.ceil(camDist)+1;zi++) {
+      this._line(b,this._v(-1.6,GY,zi*0.8),this._v(1.6,GY,zi*0.8),'#0d1520',0.5);
+    }
+
+    // HUD overlay: dual-camera pose values
+    const qpH = (qrPose && qrPose.detected) ? qrPose : null;
+    const hudW = qpH ? 210 : 110;
+    g.save();
+    g.fillStyle='rgba(6,8,15,0.75)';
+    g.fillRect(W-hudW-2,2,hudW,60);
+    // Pilot column (blue)
+    g.fillStyle='#3a6090'; g.font='7px monospace';
+    g.fillText('PILOT',   W-hudW+2, 11);
+    g.fillStyle='#2a4060'; g.font='8px monospace';
+    g.fillText('rot:  '+(rot>=0?'+':'')+rot.toFixed(2)+'°',  W-hudW+2, 22);
+    g.fillText('zoom: '+scale.toFixed(4)+'×',                W-hudW+2, 32);
+    g.fillText('tx:   '+(tx>=0?'+':'')+tx.toFixed(2),         W-hudW+2, 42);
+    g.fillText('ty:   '+(ty>=0?'+':'')+ty.toFixed(2),         W-hudW+2, 52);
+    // QR column (amber) if detected
+    if (qpH) {
+      const qr_rot=qpH.rotation_deg||0, qr_sc=qpH.zoom_scale||1;
+      const qr_tx=qpH.translation_x||0, qr_ty=qpH.translation_y||0;
+      g.fillStyle='#906030'; g.font='7px monospace';
+      g.fillText('QR',      W-hudW+106, 11);
+      g.fillStyle='#604020'; g.font='8px monospace';
+      g.fillText('rot:  '+(qr_rot>=0?'+':'')+qr_rot.toFixed(2)+'°', W-hudW+106, 22);
+      g.fillText('zoom: '+qr_sc.toFixed(4)+'×',                      W-hudW+106, 32);
+      if (qpH.pos3d_z != null) {
+        g.fillText('X:    '+(qpH.pos3d_x>=0?'+':'')+qpH.pos3d_x.toFixed(3)+'m', W-hudW+106, 42);
+        g.fillText('Z:    '+qpH.pos3d_z.toFixed(3)+'m',                           W-hudW+106, 52);
+      } else {
+        g.fillText('tx:   '+(qr_tx>=0?'+':'')+qr_tx.toFixed(2),          W-hudW+106, 42);
+        g.fillText('ty:   '+(qr_ty>=0?'+':'')+qr_ty.toFixed(2),          W-hudW+106, 52);
+      }
+    }
+    g.restore();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════    Main client-side logic
+═══════════════════════════════════════════════════════════════════════ */
+
+// ── Utility ────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fmtRad = r => (r * 180 / Math.PI).toFixed(1) + '°';
+const fmtDeg = d => (typeof d === 'number' ? d.toFixed(1) + '°' : '—');
+const clamp  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const CARRIER_COLOURS_CSS = [
+  '#ff5050','#50ff50','#5050ff','#ffff50',
+  '#ff50ff','#50ffff','#c882ff','#ffa050',
+];
+
+// ── Bind slider ────────────────────────────────────────────────────────
+function bindSlider(sliderId, labelId, fmt) {
+  const slider = $(sliderId);
+  const label  = $(labelId);
+  const update = () => label.textContent = fmt(+slider.value);
+  slider.addEventListener('input', update);
+  update();
+}
+
+bindSlider('enc-sym-frames', 'enc-sym-frames-val', v => v + ' fr');
+bindSlider('dec-phase-offset', 'dec-phase-offset-val', v => v + '°');
+bindSlider('dec-temporal',    'dec-temporal-val',     v => v + ' fr');
+bindSlider('dec-pilot-r',     'dec-pilot-r-val',      v => v + ' bins');
+bindSlider('dec-thresh',      'dec-thresh-val',       v => v + '%');
+bindSlider('dec-zoom',        'dec-zoom-val',         v => v + ' bins');
+
+// ── Build per-carrier nudge sliders ────────────────────────────────────
+const NUM_CARRIERS = 8;
+const nudgeValues  = new Array(NUM_CARRIERS).fill(0);
+const nudgeContainer = $('nudge-controls');
+for (let i = 0; i < NUM_CARRIERS; i++) {
+  const label  = document.createElement('label');
+  label.textContent = `C${i}`;
+  label.style.color = CARRIER_COLOURS_CSS[i];
+
+  const slider = document.createElement('input');
+  slider.type  = 'range';
+  slider.min   = -180; slider.max = 180; slider.step = 1; slider.value = 0;
+  slider.id    = `nudge-${i}`;
+
+  const val = document.createElement('span');
+  val.className = 'val-label';
+  val.id = `nudge-val-${i}`;
+  val.textContent = '0°';
+
+  slider.addEventListener('input', () => {
+    nudgeValues[i] = +slider.value * Math.PI / 180;
+    val.textContent = slider.value + '°';
+  });
+
+  nudgeContainer.appendChild(label);
+  nudgeContainer.appendChild(slider);
+  nudgeContainer.appendChild(val);
+}
+
+// ── Geo-correction toggle ──────────────────────────────────────────────
+let geoEnabled = true;
+$('dec-geo-btn').addEventListener('click', () => {
+  geoEnabled = !geoEnabled;
+  $('dec-geo-btn').textContent = `Geo Correction: ${geoEnabled ? 'ON' : 'OFF'}`;
+  $('dec-geo-btn').classList.toggle('active', geoEnabled);
+});
+
+// ── Encoder apply ─────────────────────────────────────────────────────
+$('enc-apply-btn').addEventListener('click', async () => {
+  await fetch('/update_encoder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      message:       $('enc-message').value,
+      window_type:   $('enc-window').value,
+      symbol_frames: +$('enc-sym-frames').value,
+    }),
+  });
+});
+
+// ── Decoder settings apply ─────────────────────────────────────────────
+$('dec-apply-btn').addEventListener('click', applyDecoderSettings);
+
+async function applyDecoderSettings() {
+  const phaseOffsetRad = (+$('dec-phase-offset').value) * Math.PI / 180;
+  const redMode = $('dec-redundancy').value;
+  await fetch('/update_decoder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      window_type:    $('dec-window').value,
+      phase_offset:   phaseOffsetRad,
+      geo_correction: geoEnabled,
+      pilot_search_r: +$('dec-pilot-r').value,
+      temporal_avg:   +$('dec-temporal').value,
+      mag_threshold:  +$('dec-thresh').value / 100,
+      fft_zoom_bins:  +$('dec-zoom').value,
+      phase_nudge:    nudgeValues,
+      redundancy_mode: redMode,
+    }),
+  });
+  // Sync redundancy mode to encoder so payload structure matches
+  await fetch('/update_encoder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ redundancy_mode: redMode }),
+  });
+}
+
+// ── ArUco decode toggle ────────────────────────────────────────────────
+$('aruco-decode-toggle').addEventListener('change', async () => {
+  const enabled = $('aruco-decode-toggle').checked;
+  $('aruco-decode-status').textContent = enabled ? 'Active' : 'Off';
+  $('aruco-decode-status').style.color  = enabled ? '#50c080' : '#507070';
+  await fetch('/update_decoder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ aruco_decode_enabled: enabled }),
+  });
+  if (!enabled) $('aruco-decode-panel').style.display = 'none';
+});
+
+// ── Webcam ─────────────────────────────────────────────────────────────
+const video   = $('webcam-video');
+const canvas  = $('capture-canvas');
+let stream    = null;
+let decodeInterval = null;
+let lastPilotPose  = {};   // latest pilot pose from slow decode
+let arucoRafId     = null; // setInterval id for fast ArUco loop
+let arucoDetecting = false;
+// Fast ArUco capture canvas (lower res for speed)
+const arucoCapCanvas = document.createElement('canvas');
+const arucoCapCtx    = arucoCapCanvas.getContext('2d');
+const ARUCO_FAST_MAX = 480;  // max side for fast capture
+
+async function arucoFastLoop() {
+  if (!stream) return;
+  if (!arucoDetecting && video.readyState >= 2) {  // >= HAVE_CURRENT_DATA
+    arucoDetecting = true;
+    const vw = video.videoWidth  || 640;
+    const vh = video.videoHeight || 480;
+    const scale = Math.min(1, ARUCO_FAST_MAX / Math.max(vw, vh));
+    const dw = Math.round(vw * scale), dh = Math.round(vh * scale);
+    if (arucoCapCanvas.width !== dw || arucoCapCanvas.height !== dh) {
+      arucoCapCanvas.width = dw; arucoCapCanvas.height = dh;
+    }
+    arucoCapCtx.drawImage(video, 0, 0, dw, dh);
+    arucoCapCanvas.toBlob(async blob => {
+      try {
+        const res  = await fetch('/detect_aruco', { method: 'POST', body: blob,
+          headers: { 'Content-Type': 'image/jpeg' } });
+        const qp = await res.json();
+        // Scale corners back to full frame coords before drawing
+        if (qp.meas_corners_px && scale < 1) {
+          qp.meas_corners_px = qp.meas_corners_px.map(([x,y]) => [x/scale, y/scale]);
+        }
+        // Update overlay
+        if (qp.detected && qp.meas_corners_px) {
+          const dist = qp.pos3d_z != null
+            ? Math.sqrt(qp.pos3d_x**2 + qp.pos3d_y**2 + qp.pos3d_z**2)
+            : null;
+          drawArucoOverlay(qp.meas_corners_px, dist, vw, vh);
+        } else {
+          clearArucoOverlay();
+        }
+        // Update 3-D pose viewer using latest pilot pose + fresh ArUco
+        pose3d.update(lastPilotPose, qp.detected ? qp : {});
+        // Update euler gauges and 3D position readout live
+        if (qp.detected) {
+          $('qr-not-detected').style.display = 'none';
+          $('qr-pose-data').style.display    = '';
+          const sgn = v => (v >= 0 ? '+' : '') + v.toFixed(2);
+          $('qr-rot').textContent     = sgn(qp.rotation_deg  || 0) + '°';
+          $('qr-zoom').textContent    = (qp.zoom_scale || 1).toFixed(4) + '×';
+          $('qr-tx').textContent      = sgn(qp.translation_x  || 0);
+          $('qr-ty').textContent      = sgn(qp.translation_y  || 0);
+          $('qr-kst').textContent     = (qp.keystone_magnitude || 0).toFixed(3);
+          $('qr-size-px').textContent = (qp.apparent_size_px || '—') + ' px';
+          const r3d = $('qr-3d-row');
+          if (qp.pos3d_z != null) {
+            r3d.style.display = '';
+            const f3 = v => (v >= 0 ? '+' : '') + v.toFixed(3) + 'm';
+            $('qr-x3d').textContent = f3(qp.pos3d_x);
+            $('qr-y3d').textContent = f3(qp.pos3d_y);
+            $('qr-z3d').textContent = qp.pos3d_z.toFixed(3) + 'm';
+          } else {
+            r3d.style.display = 'none';
+          }
+          const eulerRow = $('qr-euler-row');
+          if (qp.euler_rx != null) {
+            eulerRow.style.display = '';
+            setEulerGauge('euler-yaw-fill',   'euler-yaw-val',   qp.euler_ry);
+            setEulerGauge('euler-pitch-fill', 'euler-pitch-val', qp.euler_rx);
+            setEulerGauge('euler-roll-fill',  'euler-roll-val',  qp.euler_rz);
+          } else {
+            eulerRow.style.display = 'none';
+          }
+        } else {
+          $('qr-not-detected').style.display = '';
+          $('qr-pose-data').style.display    = 'none';
+          $('qr-euler-row').style.display    = 'none';
+        }
+      } catch (err) { console.warn('aruco fast loop:', err); }
+      arucoDetecting = false;
+    }, 'image/jpeg', 0.75);
+  }
+}
+
+async function populateCameraList() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const sel = $('cam-select');
+    sel.innerHTML = '';
+    devices.filter(d => d.kind === 'videoinput').forEach(d => {
+      const opt  = document.createElement('option');
+      opt.value  = d.deviceId;
+      opt.text   = d.label || `Camera ${sel.options.length + 1}`;
+      sel.appendChild(opt);
+    });
+  } catch(e) { console.warn('enumerateDevices', e); }
+}
+populateCameraList();
+
+$('start-cam-btn').addEventListener('click', startWebcam);
+$('stop-cam-btn').addEventListener('click',  stopWebcam);
+
+async function startWebcam() {
+  if (stream) stopWebcam();
+  const deviceId = $('cam-select').value;
+  const constraints = {
+    video: deviceId
+      ? { deviceId: { exact: deviceId }, width: 640, height: 480 }
+      : { width: 640, height: 480 },
+  };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await populateCameraList();
+    $('sync-dot').classList.add('active');
+    decodeInterval = setInterval(captureAndDecode, 333); // ~3 fps decode
+    arucoRafId = setInterval(arucoFastLoop, 33);          // fast ArUco loop (~30fps, runs off-screen)
+  } catch(e) {
+    alert('Could not access webcam: ' + e.message);
+  }
+}
+
+function stopWebcam() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  $('sync-dot').classList.remove('active');
+  if (decodeInterval) { clearInterval(decodeInterval); decodeInterval = null; }
+  if (arucoRafId)    { clearInterval(arucoRafId); arucoRafId = null; }
+  clearArucoOverlay();
+}
+
+// ── Capture & decode ───────────────────────────────────────────────────
+let decodeBusy   = false;
+let lastDecodeTs = 0;
+let fpsCount     = 0;
+let fpsTs        = performance.now();
+
+async function captureAndDecode() {
+  if (decodeBusy || !stream) return;
+  decodeBusy = true;
+  try {
+    const w = video.videoWidth  || 640;
+    const h = video.videoHeight || 480;
+    canvas.width  = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+    const resp = await fetch('/decoder_process', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ frame: dataUrl }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    updateDecoderUI(data);
+
+    // FPS counter
+    const now = performance.now();
+    fpsCount++;
+    if (now - fpsTs > 2000) {
+      const fps = (fpsCount / ((now - fpsTs) / 1000)).toFixed(1);
+      $('fps-label').textContent = fps + ' fps';
+      fpsCount = 0;
+      fpsTs    = now;
+    }
+    $('status-time').textContent = new Date().toLocaleTimeString();
+  } catch(e) {
+    console.error('decode error', e);
+    $('status-dec').textContent = 'Error: ' + e.message;
+  } finally {
+    decodeBusy = false;
+  }
+}
+
+// ── ArUco corner overlay drawing ─────────────────────────────────────
+const arucoOverlay    = $('aruco-cam-overlay');
+const arucoOverlayCtx = arucoOverlay.getContext('2d');
+
+function drawArucoOverlay(corners, dist, frameW, frameH) {
+  // Sync canvas logical size to current video display size
+  const vEl = $('webcam-video');
+  const dispW = vEl.clientWidth  || arucoOverlay.offsetWidth  || frameW;
+  const dispH = vEl.clientHeight || arucoOverlay.offsetHeight || frameH;
+  arucoOverlay.width  = dispW;
+  arucoOverlay.height = dispH;
+  const sx = dispW / frameW;
+  const sy = dispH / frameH;
+  // Letterbox offset: video uses object-fit contain by default
+  const videoAR = frameW / frameH;
+  const dispAR  = dispW  / dispH;
+  let ox = 0, oy = 0, scale = 1;
+  if (videoAR > dispAR) { scale = dispW / frameW; oy = (dispH - frameH * scale) / 2; }
+  else                  { scale = dispH / frameH; ox = (dispW - frameW * scale) / 2; }
+
+  const ctx = arucoOverlayCtx;
+  ctx.clearRect(0, 0, dispW, dispH);
+
+  // Map corner from frame px → canvas px
+  const cx = x => ox + x * scale;
+  const cy = y => oy + y * scale;
+
+  // Quad outline
+  ctx.beginPath();
+  ctx.moveTo(cx(corners[0][0]), cy(corners[0][1]));
+  for (let i = 1; i < 4; i++) ctx.lineTo(cx(corners[i][0]), cy(corners[i][1]));
+  ctx.closePath();
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth   = Math.max(2, dispW / 240);
+  ctx.stroke();
+
+  // Translucent fill
+  ctx.globalAlpha = 0.10;
+  ctx.fillStyle   = '#4ade80';
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
+
+  // Corner dots
+  const dotR = Math.max(4, dispW / 120);
+  corners.forEach(([fx, fy]) => {
+    ctx.beginPath();
+    ctx.arc(cx(fx), cy(fy), dotR, 0, Math.PI * 2);
+    ctx.fillStyle   = '#facc15';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth   = 1.5;
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  // Distance + ID label near first corner
+  const lx = cx(corners[0][0]), ly = cy(corners[0][1]);
+  const fsize = Math.max(12, Math.round(dispW / 30));
+  ctx.font = `bold ${fsize}px monospace`;
+  const label = dist != null ? dist.toFixed(2) + ' m' : 'ArUco';
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillText(label, lx + 4, ly - 3);
+  ctx.fillStyle = '#4ade80';
+  ctx.fillText(label, lx + 3, ly - 4);
+}
+
+function clearArucoOverlay() {
+  arucoOverlayCtx.clearRect(0, 0, arucoOverlay.width, arucoOverlay.height);
+}
+
+function setEulerGauge(fillId, valId, deg) {
+  const fill = $(fillId), lbl = $(valId);
+  if (!fill || !lbl) return;
+  const clamped = Math.max(-90, Math.min(90, deg));
+  const pct = (clamped / 180) * 100;  // -50..+50
+  if (pct >= 0) { fill.style.left = '50%'; fill.style.width = pct + '%'; }
+  else          { fill.style.left = (50 + pct) + '%'; fill.style.width = (-pct) + '%'; }
+  lbl.textContent = deg.toFixed(1) + '°';
+}
+
+// ── Update UI from result ──────────────────────────────────────────────
+function updateDecoderUI(d) {
+  // FFT image
+  if (d.fft_image) {
+    $('fft-display').src = d.fft_image;
+  }
+
+  // Decoded output
+  const bytesArr = d.bytes_dec || [];
+  const byteHex  = bytesArr.map(b => b < 0 ? '??' : b.toString(16).padStart(2,'0').toUpperCase());
+  $('decoded-bytes').textContent = 'Bytes: ' + byteHex.join(' ');
+
+  // Build ASCII display: colour-code printable vs non-printable
+  let asciiHtml = 'ASCII: ';
+  for (const b of bytesArr) {
+    if (b < 0) {
+      asciiHtml += '<span style="color:#604858">·</span>';
+    } else if (b === 0) {
+      asciiHtml += '<span style="color:#408060" title="0x00 sentinel">∅</span>';
+    } else if (b >= 32 && b <= 126) {
+      asciiHtml += `<span style="color:#ffe080">${String.fromCharCode(b)}</span>`;
+    } else {
+      asciiHtml += `<span style="color:#7080a0" title="0x${b.toString(16).padStart(2,'0')}">[${b.toString(16).padStart(2,'0').toUpperCase()}]</span>`;
+    }
+  }
+  $('decoded-ascii').innerHTML = asciiHtml;
+
+  const banner = $('correct-banner');
+  if (d.correct) {
+    banner.style.display = 'block';
+    banner.textContent = `✅ Full message decoded: "${d.full_message}"`;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  // Phase table
+  const tbody = $('phase-tbody');
+  tbody.innerHTML = '';
+  const phases = d.phases_meas || [];
+  const snrs   = d.snr_db     || [];
+  for (let i = 0; i < NUM_CARRIERS; i++) {
+    const ph  = phases[i];
+    const bv  = bytesArr[i];
+    const snr = snrs[i];
+    const tr  = document.createElement('tr');
+    const phStr  = (ph !== null && ph !== undefined) ? fmtDeg(ph * 180 / Math.PI) : '—';
+    const bvStr  = (bv !== null && bv >= 0)          ? bv.toString()              : '—';
+    const ascStr = (bv !== null && bv >= 32 && bv <= 126) ? String.fromCharCode(bv) : (bv === 0 ? '∅' : '?');
+    const snrStr = (snr !== undefined && snr !== null) ? snr.toFixed(1) + ' dB'   : '—';
+    const snrColor = (snr > 15) ? '#50e060' : (snr > 6) ? '#e0c040' : '#e05050';
+    tr.innerHTML = `
+      <td style="color:${CARRIER_COLOURS_CSS[i]}">C${i}</td>
+      <td style="color:#90b8e0">${phStr}</td>
+      <td style="color:#b0d0f8">${bvStr}</td>
+      <td style="color:#d8b870">${ascStr}</td>
+      <td style="color:${snrColor}">${snrStr}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // SNR bars
+  const snrBars = $('snr-bars');
+  snrBars.innerHTML = '';
+  for (let i = 0; i < NUM_CARRIERS; i++) {
+    const snr   = (snrs[i] !== undefined && snrs[i] !== null) ? snrs[i] : -30;
+    const pct   = clamp((snr + 10) / 40 * 100, 2, 100);
+    const col   = snr > 15 ? '#30b050' : snr > 6 ? '#b09010' : '#b03030';
+    const wrap  = document.createElement('div');
+    wrap.className = 'snr-bar-wrap';
+    wrap.innerHTML = `
+      <div class="snr-bar" style="height:${pct}%;background:${col};border-radius:2px 2px 0 0;width:100%"></div>
+      <div class="snr-label">C${i}</div>
+    `;
+    snrBars.appendChild(wrap);
+  }
+
+  // Pilot diagnostics
+  const pilotInfo = d.pilot_info || [];
+  $('pilot-info').innerHTML = pilotInfo.map((p, i) => {
+    const ok  = Math.abs(p.phase_err_deg) < 10 && Math.abs(p.displacement[0]) <= 1 && Math.abs(p.displacement[1]) <= 1;
+    const col = ok ? '#40a060' : '#c06050';
+    return `<span style="color:${col}">P${i} exp=(${p.expected.join(',')}) `
+         + `meas=(${p.measured_bin.join(',')}) `
+         + `disp=(${p.displacement.join(',')}) `
+         + `Δφ=${p.phase_err_deg.toFixed(1)}°</span><br>`;
+  }).join('');
+
+  // Camera pose display
+  const pose = d.pose || {};
+  const rot   = pose.rotation_deg       || 0;
+  const scale = pose.zoom_scale         || 1;
+  const tx    = pose.translation_x      || 0;
+  const ty    = pose.translation_y      || 0;
+  const kst   = pose.keystone_magnitude || 0;
+  const qual  = pose.pose_quality       || 'unknown';
+
+  // Compass arrow: rotate from 12-o'clock position by rot degrees
+  const rad = rot * Math.PI / 180;
+  const arrowLen = 28;
+  const ax2 = 40 + arrowLen * Math.sin(rad);
+  const ay2 = 40 - arrowLen * Math.cos(rad);
+  $('pose-arrow').setAttribute('x2', ax2.toFixed(1));
+  $('pose-arrow').setAttribute('y2', ay2.toFixed(1));
+  $('pose-rot-text').textContent = rot.toFixed(1) + '°';
+  // Arrow colour: green near 0, red when large
+  const rotBad = Math.min(Math.abs(rot) / 30, 1);
+  const rotCol = `rgb(${Math.round(80+rotBad*175)},${Math.round(160-rotBad*130)},${Math.round(80)})` ;
+  $('pose-arrow').setAttribute('stroke', rotCol);
+  $('pose-rot-text').setAttribute('fill', rotCol);
+
+  // Zoom bar: 50% = 1.0×, range 0.5×–1.5× mapped to 0–100%
+  const zoomPct  = clamp((scale - 0.5) / 1.0 * 100, 0, 100);
+  const zoomBad  = Math.abs(scale - 1.0);
+  const zoomCol  = zoomBad < 0.12 ? '#50b050' : zoomBad < 0.3 ? '#c09030' : '#d04040';
+  $('pose-zoom-val').textContent = scale.toFixed(3) + '×';
+  $('pose-zoom-bar').style.width = zoomPct + '%';
+  $('pose-zoom-bar').style.background = zoomCol;
+
+  // Translation bars: 50% = 0 bins, range ±10 mapped to 0–100%
+  const txPct = clamp(50 + tx / 10 * 50, 0, 100);
+  const tyPct = clamp(50 + ty / 10 * 50, 0, 100);
+  const shiftCol = (Math.abs(tx) < 2 && Math.abs(ty) < 2) ? '#5070b0' : '#b06030';
+  $('pose-tx-val').textContent = (tx >= 0 ? '+' : '') + tx.toFixed(1) + ' bins';
+  $('pose-ty-val').textContent = (ty >= 0 ? '+' : '') + ty.toFixed(1) + ' bins';
+  $('pose-tx-bar').style.width = txPct + '%'; $('pose-tx-bar').style.background = shiftCol;
+  $('pose-ty-bar').style.width = tyPct + '%'; $('pose-ty-bar').style.background = shiftCol;
+
+  // Keystone bar: 0–5 bins range
+  const kstPct = clamp(kst / 5 * 100, 0, 100);
+  const kstCol = kst < 1 ? '#50b050' : kst < 3 ? '#c09030' : '#d04040';
+  $('pose-kst-val').textContent = kst.toFixed(3) + ' bins';
+  $('pose-kst-bar').style.width = kstPct + '%';
+  $('pose-kst-bar').style.background = kstCol;
+
+  // Quality badge
+  const badge = $('pose-quality-badge');
+  badge.className = 'pose-quality pq-' + qual;
+  const qLabels = {good:'✅ Pose quality: Good', moderate:'⚠️ Pose quality: Moderate', poor:'❌ Pose quality: Poor', unknown:'— Pose quality: Unknown'};
+  badge.textContent = qLabels[qual] || qLabels.unknown;
+  // Add correction advice to badge
+  if (qual !== 'good' && qual !== 'unknown') {
+    let advice = [];
+    if (Math.abs(rot) > 2)   advice.push(`rotate ${Math.abs(rot).toFixed(1)}° ${rot>0?'CCW':'CW'}`);
+    if (Math.abs(scale-1)>0.12) advice.push(scale<1 ? 'move closer' : 'move back');
+    if (Math.abs(tx)>2||Math.abs(ty)>2) advice.push('re-centre camera');
+    if (kst>1) advice.push('face screen squarely');
+    if (advice.length) badge.textContent += ' → ' + advice.join(', ');
+  }
+
+  // Auto phase offset
+  $('auto-phase-offset').textContent = fmtDeg(d.global_phase_offset_deg);
+
+  // ─ ArUco vs Pilot side-by-side comparison (ArUco side driven by fast loop) ─
+  // Only update the pilot comparison column here; ArUco panel is updated
+  // in real-time by arucoFastLoop() above.
+  const qp = d.aruco_pose || {};  // still needed for aruco_fft_result below
+  // Pilot column (same-frame comparison)
+  $('pilot-rot-cmp').textContent  = (rot >= 0 ? '+' : '') + rot.toFixed(2) + '°';
+  $('pilot-zoom-cmp').textContent = scale.toFixed(4) + '×';
+  $('pilot-tx-cmp').textContent   = (tx >= 0 ? '+' : '') + tx.toFixed(1);
+  $('pilot-ty-cmp').textContent   = (ty >= 0 ? '+' : '') + ty.toFixed(1);
+  $('pilot-kst-cmp').textContent  = kst.toFixed(3);
+  $('pilot-qual-cmp').textContent = qual;
+
+  // Update 3-D pose viewer
+  // Store latest pilot pose so the fast ArUco loop can use it
+  if (d.pose) lastPilotPose = d.pose;
+  // 3D viewer is driven by the fast ArUco loop; only update pilot part here
+  // when ArUco loop isn't running (webcam off)
+  if (!stream && d.pose) pose3d.update(d.pose, d.aruco_pose || {});
+
+  // ─ ArUco-referenced decode result ─────────────────────────────────────
+  const afr = d.aruco_fft_result;
+  const aEnabled = $('aruco-decode-toggle').checked;
+  if (aEnabled) {
+    $('aruco-decode-panel').style.display = '';
+    if (!afr || !qp.detected) {
+      $('aruco-decode-no-marker').style.display = '';
+      $('aruco-decode-content').style.display   = 'none';
+    } else if (afr.error) {
+      $('aruco-decode-no-marker').style.display = '';
+      $('aruco-decode-no-marker').textContent   = 'Error: ' + afr.error;
+      $('aruco-decode-content').style.display   = 'none';
+    } else {
+      $('aruco-decode-no-marker').style.display = 'none';
+      $('aruco-decode-content').style.display   = '';
+      if (afr.fft_image)  $('aruco-fft-img').src  = afr.fft_image;
+      if (afr.warp_image) $('aruco-warp-img').src  = afr.warp_image;
+      const aBytes = afr.bytes_dec || [];
+      const aSnrs  = afr.snr_db   || [];
+      const aHex   = aBytes.map(b => b < 0 ? '??' : b.toString(16).padStart(2,'0').toUpperCase());
+      $('aruco-decoded-bytes').textContent = 'Bytes: ' + aHex.join(' ');
+      let aAscii = 'ASCII: ';
+      for (const b of aBytes) {
+        if (b < 0) aAscii += '<span style="color:#604858">·</span>';
+        else if (b === 0) aAscii += '<span style="color:#408060">∅</span>';
+        else if (b >= 32 && b <= 126) aAscii += `<span style="color:#ffe080">${String.fromCharCode(b)}</span>`;
+        else aAscii += `<span style="color:#7080a0">[${b.toString(16).padStart(2,'0').toUpperCase()}]</span>`;
+      }
+      $('aruco-decoded-ascii').innerHTML = aAscii;
+      const aBars = $('aruco-snr-bars');
+      aBars.innerHTML = '';
+      for (let i = 0; i < aSnrs.length; i++) {
+        const snr = aSnrs[i] !== null ? aSnrs[i] : -30;
+        const pct = clamp((snr + 10) / 40 * 100, 2, 100);
+        const col = snr > 15 ? '#30b050' : snr > 6 ? '#b09010' : '#b03030';
+        const w   = document.createElement('div');
+        w.className = 'snr-bar-wrap';
+        w.innerHTML = `<div class="snr-bar" style="height:${pct}%;background:${col};border-radius:2px 2px 0 0;width:100%"></div><div class="snr-label">C${i}</div>`;
+        aBars.appendChild(w);
+      }
+    }
+  } else {
+    $('aruco-decode-panel').style.display = 'none';
+  }
+
+  // Guidance
+  const hints = d.guidance || [];
+  const ul    = $('guidance-list');
+  ul.innerHTML = hints.map(h => {
+    const isOk   = h.startsWith('Signal looks good');
+    const isCrit = h.includes('very low') || h.includes('Error') || h.includes('wrong');
+    const cls    = isOk ? 'ok' : isCrit ? 'crit' : '';
+    return `<li class="${cls}">${h}</li>`;
+  }).join('');
+
+  // Status bar
+  $('status-dec').textContent = `snr_avg=${snrs.length ? (snrs.reduce((a,b)=>a+b,0)/snrs.length).toFixed(1) : '—'} dB`;
+}
+
+// ── Init 3-D pose viewer ─────────────────────────────────────────────────────────────────
+const pose3d = new Pose3D($('pose-3d-canvas'));
+
+// ── Poll encoder state ─────────────────────────────────────────────────────
+// Defaults captured once so the Reset button can restore them
+let DEFAULT_DATA_FREQS  = null;
+let DEFAULT_PILOT_FREQS = null;
+
+function buildFreqGrid(containerId, freqs, prefix) {
+  const container = $(containerId);
+  if (!container) return;
+  freqs.forEach(([ky, kx], i) => {
+    let row = $(`${prefix}-row-${i}`);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'freq-row';
+      row.id = `${prefix}-row-${i}`;
+      row.innerHTML =
+        `<label>${prefix[0].toUpperCase()}${i}</label>`
+        + `<span class="freq-sep">ky</span><input type="number" id="${prefix}-ky-${i}" min="-64" max="64">`
+        + `<span class="freq-sep">kx</span><input type="number" id="${prefix}-kx-${i}" min="-64" max="64">`;
+      container.appendChild(row);
+    }
+    // Don't overwrite values the user is actively editing
+    const kyEl = $(`${prefix}-ky-${i}`), kxEl = $(`${prefix}-kx-${i}`);
+    if (document.activeElement !== kyEl) kyEl.value = ky;
+    if (document.activeElement !== kxEl) kxEl.value = kx;
+  });
+}
+
+async function pollEncoderState() {
+  try {
+    const resp  = await fetch('/encoder_state');
+    const state = await resp.json();
+    const bytes = state.current_bytes || [];
+    const phases= state.current_phases || [];
+    // Populate freq bin grids (only updates values if rows already exist)
+    if (state.data_freqs)  { buildFreqGrid('data-freq-grid',  state.data_freqs,  'df'); }
+    if (state.pilot_freqs) { buildFreqGrid('pilot-freq-grid', state.pilot_freqs, 'pf'); }
+    // Capture defaults once
+    if (!DEFAULT_DATA_FREQS && state.data_freqs)   DEFAULT_DATA_FREQS  = state.data_freqs.map(f => [...f]);
+    if (!DEFAULT_PILOT_FREQS && state.pilot_freqs) DEFAULT_PILOT_FREQS = state.pilot_freqs.map(f => [...f]);
+    let html = `<b>Sym ${state.symbol_idx + 1} / ${state.n_symbols}</b>`
+             + ` — frame ${state.frame_in_sym} / ${state.symbol_frames}<br>`;
+    html += '&nbsp;Bytes carried:&nbsp;';
+    bytes.forEach((b, i) => {
+      const col = CARRIER_COLOURS_CSS[i];
+      const ph  = phases[i];
+      html += `<span style="color:${col}">[C${i}: ${b.toString().padStart(3,' ')}`
+            + ` @${(ph * 180 / Math.PI).toFixed(0)}°]</span> `;
+    });
+    html += `<br>&nbsp;Full payload: [${state.bytes_data.join(', ')}]`;
+    $('enc-state').innerHTML = html;
+    $('status-enc').textContent = `sym ${state.symbol_idx+1}/${state.n_symbols}`;
+  } catch(e) { /* silently ignore */ }
+}
+setInterval(pollEncoderState, 1000);
+pollEncoderState();
+
+// ── Frequency Bins ───────────────────────────────────────────────────────
+(function () {
+  function collectFreqs(prefix, count) {
+    const freqs = [];
+    for (let i = 0; i < count; i++) {
+      const ky = parseInt($(`${prefix}-ky-${i}`)?.value ?? '0', 10);
+      const kx = parseInt($(`${prefix}-kx-${i}`)?.value ?? '0', 10);
+      freqs.push([ky, kx]);
+    }
+    return freqs;
+  }
+
+  $('freq-apply-btn').addEventListener('click', async () => {
+    const body = {
+      data_freqs:  collectFreqs('df', 8),
+      pilot_freqs: collectFreqs('pf', 4),
+    };
+    try {
+      const r = await fetch('/update_freqs', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (j.error) { alert('Freq update error: ' + j.error); }
+    } catch(e) { console.error(e); }
+  });
+
+  $('freq-reset-btn').addEventListener('click', async () => {
+    if (!DEFAULT_DATA_FREQS || !DEFAULT_PILOT_FREQS) return;
+    try {
+      await fetch('/update_freqs', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ data_freqs: DEFAULT_DATA_FREQS, pilot_freqs: DEFAULT_PILOT_FREQS }),
+      });
+      await pollEncoderState();
+    } catch(e) { console.error(e); }
+  });
+}());
+
+// ── Video Background ──────────────────────────────────────────────────────
+(function () {
+  const uploadBtn    = $('vid-bg-upload-btn');
+  const fileInput    = $('vid-bg-file');
+  const enableChk    = $('vid-bg-enable');
+  const opacityRange = $('vid-opacity-range');
+  const opacityVal   = $('vid-opacity-val');
+  const statusEl     = $('vid-bg-status');
+
+  async function applySettings() {
+    try {
+      await fetch('/video_bg_settings', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          enabled: enableChk.checked,
+          opacity: parseInt(opacityRange.value, 10) / 100
+        })
+      });
+    } catch (e) { console.warn('vid bg settings:', e); }
+  }
+
+  uploadBtn.addEventListener('click', async () => {
+    const file = fileInput.files[0];
+    if (!file) { statusEl.textContent = 'Select a video file first.'; return; }
+    statusEl.textContent = 'Uploading…';
+    const fd = new FormData();
+    fd.append('video', file);
+    try {
+      const res  = await fetch('/upload_video', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) {
+        statusEl.textContent = 'Error: ' + data.error;
+      } else {
+        const dur = data.frames && data.fps
+          ? ` — ${(data.frames / data.fps).toFixed(1)} s loop`
+          : '';
+        statusEl.textContent =
+          `✓ ${data.filename}  (${data.frames} fr @ ${Number(data.fps).toFixed(1)} fps${dur})`;
+        statusEl.style.color = '#50c880';
+      }
+    } catch (e) {
+      statusEl.textContent = 'Upload failed: ' + e.message;
+      statusEl.style.color = '#c05050';
+    }
+  });
+
+  enableChk.addEventListener('change', applySettings);
+
+  opacityRange.addEventListener('input', () => {
+    opacityVal.textContent = opacityRange.value + '%';
+  });
+  opacityRange.addEventListener('change', applySettings);
+})();
+</script>
+</body>
+</html>

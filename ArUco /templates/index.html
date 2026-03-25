@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>ArUco Pose Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 10px 20px;
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.1rem; letter-spacing: 0.05em; color: #7dd3fc; }
+    #status {
+      margin-left: auto;
+      font-size: 0.8rem;
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: #1f2937;
+      color: #9ca3af;
+      transition: all .3s;
+    }
+    #status.found { background: #14532d; color: #4ade80; }
+
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Left panel ─────────────────────────────────── */
+    #left {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #2a2a2a;
+      overflow: hidden;
+    }
+    .panel-title {
+      padding: 6px 14px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: #6b7280;
+      background: #111;
+      border-bottom: 1px solid #1e1e1e;
+      flex-shrink: 0;
+    }
+
+    /* ── Left: live camera feed ─────────────────── */
+    #cam-feed-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+      min-height: 0;
+    }
+    #cam-video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    #cam-overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+    #no-cam-msg {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      color: #4b5563;
+      pointer-events: none;
+    }
+    #cam-bottom {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      background: #111;
+      border-top: 1px solid #1e1e1e;
+    }
+    #marker-thumb {
+      width: 44px;
+      height: 44px;
+      image-rendering: pixelated;
+      background: white;
+      border: 2px solid #374151;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+    #marker-caption {
+      flex: 1;
+      font-size: 0.7rem;
+      color: #4b5563;
+      line-height: 1.7;
+    }
+    #marker-caption strong { color: #9ca3af; }
+    #btn-start {
+      padding: 8px 18px;
+      background: #1d4ed8;
+      color: white;
+      border: none;
+      border-radius: 7px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: background .2s;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    #btn-start:hover  { background: #2563eb; }
+    #btn-start:disabled { background: #14532d; color: #4ade80; cursor: default; }
+
+    /* ── Right panel ────────────────────────────────── */
+    #right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #three-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #three-container canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* ── Angles panel ───────────────────────────────── */
+    #angles-panel {
+      flex-shrink: 0;
+      background: #111;
+      border-top: 1px solid #1e1e1e;
+      padding: 10px 16px 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px 14px;
+    }
+    .angle-block { display: flex; flex-direction: column; gap: 4px; }
+    .angle-label {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: #6b7280;
+      display: flex;
+      justify-content: space-between;
+    }
+    .angle-label span { color: #e5e7eb; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+    .angle-track {
+      height: 6px;
+      background: #1f2937;
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+    }
+    .angle-fill {
+      position: absolute;
+      top: 0; height: 100%;
+      border-radius: 3px;
+      transition: left .08s, width .08s;
+    }
+    .angle-center-tick {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 1px;
+      left: 50%;
+      background: #374151;
+    }
+
+    #info-overlay {
+      position: absolute;
+      bottom: 10px; left: 10px;
+      font-size: 0.72rem;
+      color: #6b7280;
+      pointer-events: none;
+      line-height: 1.6;
+    }
+    #pose-text { color: #d1d5db; }
+    #legend {
+      position: absolute;
+      top: 10px; right: 10px;
+      font-size: 0.7rem; color: #6b7280;
+      background: rgba(0,0,0,.55);
+      padding: 6px 10px;
+      border-radius: 6px;
+      line-height: 1.9;
+    }
+    .dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ArUco Pose Tracker</h1>
+  <span id="status">Camera off</span>
+</header>
+
+<main>
+  <!-- ── Left: large ArUco marker ────────────────── -->
+  <section id="left">
+    <div class="panel-title">Live Camera Feed — ArUco detection overlay</div>
+    <!-- Live camera feed with corner overlay -->
+    <div id="cam-feed-wrap">
+      <video id="cam-video" autoplay muted playsinline></video>
+      <canvas id="cam-overlay"></canvas>
+      <div id="no-cam-msg">Press "Enable Camera" below to start</div>
+    </div>
+
+    <!-- Bottom bar: marker thumbnail + caption + button -->
+    <div id="cam-bottom">
+      <img id="marker-thumb" src="/marker.png" alt="ArUco marker"/>
+      <div id="marker-caption">
+        <strong>Point webcam at this marker</strong><br>
+        Marker size = 5 cm &nbsp;·&nbsp; DICT_6X6_250 ID 0
+      </div>
+      <button id="btn-start">&#9654; Enable Camera</button>
+    </div>
+  </section>
+
+  <!-- ── Right: Three.js 3-D scene + angles ──────── -->
+  <section id="right">
+    <div class="panel-title">Camera Pose (3-D) — drag to orbit</div>
+    <div id="three-container">
+      <div id="info-overlay">
+        <div id="pose-text">Waiting for marker…</div>
+        <div style="margin-top:4px; color:#4b5563">Marker = world origin &nbsp;|&nbsp; Drag to orbit</div>
+      </div>
+      <div id="legend">
+        <div><span class="dot" style="background:#ef4444"></span>X</div>
+        <div><span class="dot" style="background:#22c55e"></span>Y</div>
+        <div><span class="dot" style="background:#3b82f6"></span>Z</div>
+        <div style="margin-top:4px"><span class="dot" style="background:#f8e45c;border-radius:2px"></span>Marker</div>
+        <div><span class="dot" style="background:#7dd3fc;border-radius:2px"></span>Camera</div>
+      </div>
+    </div>
+
+    <!-- Euler angle gauges -->
+    <div id="angles-panel">
+      <div class="angle-block">
+        <div class="angle-label">Yaw (pan) <span id="yaw-val">—</span></div>
+        <div class="angle-track">
+          <div class="angle-center-tick"></div>
+          <div class="angle-fill" id="yaw-fill" style="background:#a78bfa"></div>
+        </div>
+      </div>
+      <div class="angle-block">
+        <div class="angle-label">Pitch (tilt) <span id="pitch-val">—</span></div>
+        <div class="angle-track">
+          <div class="angle-center-tick"></div>
+          <div class="angle-fill" id="pitch-fill" style="background:#34d399"></div>
+        </div>
+      </div>
+      <div class="angle-block">
+        <div class="angle-label">Roll <span id="roll-val">—</span></div>
+        <div class="angle-track">
+          <div class="angle-center-tick"></div>
+          <div class="angle-fill" id="roll-fill" style="background:#fb923c"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Three.js scene ───────────────────────────────────────────────────────────
+const container = document.getElementById('three-container');
+const renderer  = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x0a0a0a);
+container.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera3 = new THREE.PerspectiveCamera(50, 1, 0.001, 100);
+camera3.position.set(0, 0.15, 0.35);
+camera3.lookAt(0, 0, 0);
+
+const controls = new OrbitControls(camera3, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+new ResizeObserver(() => {
+  const w = container.clientWidth, h = container.clientHeight;
+  renderer.setSize(w, h, false);
+  camera3.aspect = w / h;
+  camera3.updateProjectionMatrix();
+}).observe(container);
+
+scene.add(new THREE.GridHelper(0.5, 10, 0x1a1a1a, 0x222222));
+scene.add(makeAxes(0.025));
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+const dirL = new THREE.DirectionalLight(0xffffff, 0.8);
+dirL.position.set(0.5, 1, 0.5);
+scene.add(dirL);
+
+// Marker plane
+const MARKER_M = 0.05;
+const markerMesh = (() => {
+  const g = new THREE.PlaneGeometry(MARKER_M, MARKER_M);
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial(
+    { color: 0xf8e45c, side: THREE.DoubleSide, roughness: 0.8 }));
+  m.rotation.x = -Math.PI / 2;
+  m.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(g),
+    new THREE.LineBasicMaterial({ color: 0xfbbf24 })));
+  m.add(makeAxes(MARKER_M * 0.7));
+  return m;
+})();
+scene.add(markerMesh);
+
+// Camera representation
+const camGroup = new THREE.Group();
+camGroup.visible = false;
+scene.add(camGroup);
+
+const camBody = new THREE.Mesh(
+  new THREE.BoxGeometry(0.020, 0.014, 0.016),
+  new THREE.MeshStandardMaterial({ color: 0x7dd3fc, roughness: 0.4, metalness: 0.3 }));
+camGroup.add(camBody);
+
+const lensCone = new THREE.Mesh(
+  new THREE.ConeGeometry(0.006, 0.012, 8),
+  new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.3 }));
+lensCone.rotation.x = Math.PI / 2;
+lensCone.position.z = 0.014;
+camGroup.add(lensCone);
+camGroup.add(makeAxes(MARKER_M * 0.6));
+
+// Trail
+const trailPts = [];
+const trailGeo = new THREE.BufferGeometry();
+const trailLine = new THREE.Line(
+  trailGeo,
+  new THREE.LineBasicMaterial({ color: 0x38bdf8, opacity: 0.5, transparent: true }));
+scene.add(trailLine);
+
+function updateCameraPose(R, t) {
+  const px = -(R[0]*t[0] + R[3]*t[1] + R[6]*t[2]);
+  const py = -(R[1]*t[0] + R[4]*t[1] + R[7]*t[2]);
+  const pz = -(R[2]*t[0] + R[5]*t[1] + R[8]*t[2]);
+  camGroup.position.set(px, -py, -pz);
+  const m4 = new THREE.Matrix4();
+  m4.set( R[0], -R[3], -R[6], 0,
+         -R[1],  R[4],  R[7], 0,
+         -R[2],  R[5],  R[8], 0,
+            0,     0,     0,  1);
+  camGroup.quaternion.setFromRotationMatrix(m4);
+  trailPts.push(new THREE.Vector3(px, -py, -pz));
+  if (trailPts.length > 300) trailPts.shift();
+  trailGeo.setFromPoints(trailPts);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera3);
+}
+animate();
+
+function makeAxes(size) {
+  const g = new THREE.Group();
+  [[new THREE.Vector3(1,0,0), 0xef4444],
+   [new THREE.Vector3(0,1,0), 0x22c55e],
+   [new THREE.Vector3(0,0,1), 0x3b82f6]].forEach(([dir, col]) => {
+    const geo = new THREE.BufferGeometry().setFromPoints(
+      [new THREE.Vector3(), dir.clone().multiplyScalar(size)]);
+    g.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: col })));
+  });
+  return g;
+}
+
+// ── Euler angles from rotation matrix ───────────────────────────────────────
+// R is row-major flat [9] from solvePnP (world→camera).
+// We decompose R^T (camera orientation in world/marker frame) using ZYX convention.
+function rotToEulerDeg(R) {
+  // R^T[i][j] = R[j*3+i]
+  const Rt = (i,j) => R[j*3+i];
+  const yaw   =  Math.atan2( Rt(1,0), Rt(0,0)) * 180/Math.PI;
+  const pitch =  Math.atan2(-Rt(2,0), Math.sqrt(Rt(2,1)**2 + Rt(2,2)**2)) * 180/Math.PI;
+  const roll  =  Math.atan2( Rt(2,1), Rt(2,2)) * 180/Math.PI;
+  return { yaw, pitch, roll };
+}
+
+// Gauge fill: maps [-180,180] → [0%,100%], centred at 50%
+function setGauge(fillEl, valEl, deg) {
+  const clamped = Math.max(-90, Math.min(90, deg)); // clamp display to ±90°
+  const centre  = 50;
+  const pct     = (clamped / 180) * 100; // -50 to +50
+  if (pct >= 0) {
+    fillEl.style.left  = centre + '%';
+    fillEl.style.width = pct + '%';
+  } else {
+    fillEl.style.left  = (centre + pct) + '%';
+    fillEl.style.width = (-pct) + '%';
+  }
+  valEl.textContent = deg.toFixed(1) + '°';
+}
+
+// ── Webcam + detection loop ──────────────────────────────────────────────────
+const video       = document.getElementById('cam-video');
+const btnStart    = document.getElementById('btn-start');
+const statusEl    = document.getElementById('status');
+const poseTextEl  = document.getElementById('pose-text');
+const yawFill     = document.getElementById('yaw-fill');
+const pitchFill   = document.getElementById('pitch-fill');
+const rollFill    = document.getElementById('roll-fill');
+const yawVal      = document.getElementById('yaw-val');
+const pitchVal    = document.getElementById('pitch-val');
+const rollVal     = document.getElementById('roll-val');
+const noCamMsg    = document.getElementById('no-cam-msg');
+const overlay     = document.getElementById('cam-overlay');
+const overlayCtx  = overlay.getContext('2d');
+
+let streaming = false;
+let detecting = false;
+
+btnStart.addEventListener('click', async () => {
+  if (streaming) return;
+  btnStart.disabled = true;
+  btnStart.textContent = 'Starting…';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    noCamMsg.style.display = 'none';
+    btnStart.textContent = '● Camera active';
+    statusEl.textContent = 'No marker';
+    statusEl.classList.remove('found');
+    streaming = true;
+    requestAnimationFrame(detectLoop);
+  } catch (err) {
+    btnStart.disabled = false;
+    btnStart.textContent = '&#9654; Enable Camera';
+    alert(`Camera error: ${err.message}`);
+  }
+});
+
+// Off-screen canvas for frame capture — kept at detect resolution (max 640px)
+const DETECT_MAX = 640;
+const offscreen = document.createElement('canvas');
+const offCtx    = offscreen.getContext('2d');
+
+// canvas used only for display overlay sync
+function syncOverlaySize() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (overlay.width !== vw || overlay.height !== vh) {
+    overlay.width  = vw;
+    overlay.height = vh;
+  }
+}
+
+async function detectLoop() {
+  if (!streaming) return;
+  if (!detecting && video.readyState === video.HAVE_ENOUGH_DATA) {
+    detecting = true;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    syncOverlaySize();
+
+    // Downscale for detection (faster, lower bandwidth)
+    const scale = Math.min(1, DETECT_MAX / Math.max(vw, vh));
+    const dw = Math.round(vw * scale), dh = Math.round(vh * scale);
+    if (offscreen.width !== dw || offscreen.height !== dh) {
+      offscreen.width = dw; offscreen.height = dh;
+    }
+    offCtx.drawImage(video, 0, 0, dw, dh);
+    offscreen.toBlob(async blob => {
+      try {
+        const res  = await fetch('/detect', { method: 'POST', body: blob,
+          headers: { 'Content-Type': 'image/jpeg' } });
+        const data = await res.json();
+        // Scale corners back to full video resolution before drawing
+        if (data.found && scale < 1) {
+          data.corners = data.corners.map(([x,y]) => [x / scale, y / scale]);
+        }
+        updatePose(data);
+      } catch (_) { /* network blip */ }
+      detecting = false;
+    }, 'image/jpeg', 0.75);
+  }
+  requestAnimationFrame(detectLoop);
+}
+
+function clearOverlay() {
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+}
+
+function drawCornersOnOverlay(corners, dist) {
+  const ctx = overlayCtx;
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  // Quad outline
+  ctx.beginPath();
+  ctx.moveTo(corners[0][0], corners[0][1]);
+  for (let i = 1; i < 4; i++) ctx.lineTo(corners[i][0], corners[i][1]);
+  ctx.closePath();
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth   = Math.max(2, overlay.width / 320);
+  ctx.stroke();
+
+  // Filled translucent quad
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle   = '#4ade80';
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
+
+  // Corner dots
+  corners.forEach(([x, y]) => {
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(4, overlay.width / 160), 0, Math.PI * 2);
+    ctx.fillStyle   = '#facc15';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth   = 1.5;
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  // Distance label at top-left corner
+  const [lx, ly] = corners[0];
+  const fontSize = Math.max(14, Math.round(overlay.width / 40));
+  ctx.font      = `bold ${fontSize}px monospace`;
+  ctx.fillStyle = '#000';
+  ctx.fillText(`${dist.toFixed(2)} m`, lx + 3, ly - 3);
+  ctx.fillStyle = '#4ade80';
+  ctx.fillText(`${dist.toFixed(2)} m`, lx + 2, ly - 4);
+}
+
+function resetGauges() {
+  [yawFill, pitchFill, rollFill].forEach(f => { f.style.left='50%'; f.style.width='0'; });
+  [yawVal, pitchVal, rollVal].forEach(v => v.textContent = '—');
+}
+
+function updatePose(data) {
+  if (data.found) {
+    statusEl.textContent  = `Marker #${data.marker_id} found`;
+    statusEl.classList.add('found');
+    updateCameraPose(data.R, data.tvec);
+    camGroup.visible = true;
+
+    const t    = data.tvec;
+    const dist = Math.hypot(...t);
+    poseTextEl.innerHTML =
+      `X: ${t[0].toFixed(3)} m &nbsp; Y: ${t[1].toFixed(3)} m &nbsp; Z: ${t[2].toFixed(3)} m<br>` +
+      `Distance: <strong>${dist.toFixed(3)} m</strong>`;
+
+    const { yaw, pitch, roll } = rotToEulerDeg(data.R);
+    setGauge(yawFill,   yawVal,   yaw);
+    setGauge(pitchFill, pitchVal, pitch);
+    setGauge(rollFill,  rollVal,  roll);
+
+    if (data.corners) drawCornersOnOverlay(data.corners, dist);
+  } else {
+    statusEl.textContent = 'No marker';
+    statusEl.classList.remove('found');
+    camGroup.visible = false;
+    poseTextEl.textContent = 'Waiting for marker…';
+    resetGauges();
+    clearOverlay();
+  }
+}
+</script>
+</body>
+</html>
