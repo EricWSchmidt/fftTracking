@@ -527,7 +527,7 @@
 
     <h2>Encoder Settings</h2>
     <div class="settings-grid">
-      <label>Message</label>
+      <label id="enc-message-label">Message</label>
       <input type="text" id="enc-message" value="Google.com" placeholder="message to encode" style="grid-column:2/4">
 
       <label>Window</label>
@@ -541,6 +541,25 @@
       <select id="enc-mod-mode" style="grid-column:2/4" onchange="onEncModModeChange()">
         <option value="psk" selected>PSK — Phase Shift Keying</option>
         <option value="cpm">CPM — Continuous Phase Modulation</option>
+      </select>
+
+      <label>Bits / carrier</label>
+      <select id="enc-bits" onchange="onEncBitsChange()">
+        <option value="8" selected>8 bit — 256 levels</option>
+        <option value="7">7 bit — 128 levels</option>
+        <option value="6">6 bit — 64 levels</option>
+        <option value="5">5 bit — 32 levels</option>
+        <option value="4">4 bit — 16 levels</option>
+        <option value="3">3 bit — 8 levels</option>
+        <option value="2">2 bit — 4 levels</option>
+        <option value="1">1 bit — 2 levels</option>
+      </select>
+      <span class="val-label" id="enc-bits-range">0–255</span>
+
+      <label>Input mode</label>
+      <select id="enc-input-mode" style="grid-column:2/4" onchange="onEncInputModeChange()">
+        <option value="text" selected>Text string</option>
+        <option value="table">Table — raw n-bit values</option>
       </select>
     </div>
     <!-- CPM sub-panel (hidden unless CPM selected) -->
@@ -560,6 +579,22 @@
       <div style="font-size:0.68rem;color:#c08020;margin-top:4px;line-height:1.5">
         ⚠ CPM requires an unbroken frame sequence. Any dropped frame permanently
         desynchronises all subsequent symbols. Only use CPM on a lossless local display.
+      </div>
+    </div>
+    <!-- Table editor (shown when input mode = table) -->
+    <div id="table-editor-section" style="display:none;margin:4px 0;background:#07090f;border:1px solid #2a2040;border-radius:5px;padding:6px 8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span id="table-range-label" style="font-size:0.7rem;color:#507070">Values: 0–255 per carrier</span>
+        <div style="display:flex;gap:4px">
+          <button class="btn" onclick="addTableRow_ui()" style="padding:2px 8px;font-size:0.7rem">+ Row</button>
+          <button class="btn" onclick="removeTableRow_ui()" style="padding:2px 8px;font-size:0.7rem">− Row</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto;max-height:220px;overflow-y:auto">
+        <table id="table-editor" style="border-collapse:collapse;width:100%"></table>
+      </div>
+      <div style="font-size:0.65rem;color:#507070;margin-top:4px">
+        Each row = one symbol (loops). Columns = carriers C1–C8.
       </div>
     </div>
     <div class="settings-grid">
@@ -871,6 +906,19 @@
       <input type="number" id="dec-cpm-h" value="0.5" min="0.05" max="2.0" step="0.05"
              style="display:none;width:64px;grid-column:2/4">
       <span></span>
+
+      <label>Bits / carrier</label>
+      <select id="dec-bits">
+        <option value="8" selected>8 bit — 256 levels</option>
+        <option value="7">7 bit — 128 levels</option>
+        <option value="6">6 bit — 64 levels</option>
+        <option value="5">5 bit — 32 levels</option>
+        <option value="4">4 bit — 16 levels</option>
+        <option value="3">3 bit — 8 levels</option>
+        <option value="2">2 bit — 4 levels</option>
+        <option value="1">1 bit — 2 levels</option>
+      </select>
+      <span class="val-label">must match encoder</span>
     </div>
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
@@ -1398,45 +1446,178 @@ $('dec-geo-btn').addEventListener('click', () => {
   $('dec-geo-btn').classList.toggle('active', geoEnabled);
 });
 
+// ── Modulation mode toggle ─────────────────────────────────────────────
+function onEncModModeChange() {
+  const isCpm = $('enc-mod-mode').value === 'cpm';
+  $('cpm-enc-panel').style.display = isCpm ? 'block' : 'none';
+}
+
+// ── Bits-per-carrier + input-mode helpers ──────────────────────────────
+function onEncBitsChange() {
+  const bits   = +$('enc-bits').value;
+  const maxVal = (1 << bits) - 1;
+  $('enc-bits-range').textContent = `0–${maxVal}`;
+  buildTableEditor();   // refresh max values in existing cells
+}
+
+function onEncInputModeChange() {
+  const isTable = $('enc-input-mode').value === 'table';
+  $('enc-message-label').style.display = isTable ? 'none' : '';
+  $('enc-message').style.display       = isTable ? 'none' : '';
+  $('table-editor-section').style.display = isTable ? '' : 'none';
+  if (isTable) buildTableEditor();
+}
+
+// Build/re-build the n×8 symbol table editor
+function buildTableEditor() {
+  const bits      = +$('enc-bits').value;
+  const maxVal    = (1 << bits) - 1;
+  const nCarriers = 8;
+  const tableEl   = $('table-editor');
+
+  // Preserve existing data before rebuilding
+  const existingRows = tableEl.querySelectorAll('tr.sym-row');
+  const saved = [];
+  existingRows.forEach(tr => {
+    const row = [];
+    tr.querySelectorAll('input').forEach(inp => row.push(Math.min(maxVal, +inp.value || 0)));
+    saved.push(row);
+  });
+
+  tableEl.innerHTML = '';
+
+  // Header row
+  const thead = document.createElement('thead');
+  const htr   = document.createElement('tr');
+  let hHtml   = '<th style="font-size:0.62rem;color:#507070;padding:2px 4px">#</th>';
+  for (let c = 0; c < nCarriers; c++)
+    hHtml += `<th style="font-size:0.62rem;color:#507070;padding:2px 4px">C${c+1}</th>`;
+  htr.innerHTML = hHtml;
+  thead.appendChild(htr);
+  tableEl.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  const nRows = saved.length || 3;
+  for (let r = 0; r < nRows; r++) _appendTableRow(tbody, r + 1, nCarriers, maxVal, saved[r] || null);
+  tableEl.appendChild(tbody);
+
+  $('table-range-label').textContent = `Values: 0–${maxVal} per carrier`;
+}
+
+function _appendTableRow(tbody, rowNum, nCarriers, maxVal, data) {
+  const tr = document.createElement('tr');
+  tr.className = 'sym-row';
+  const td0 = document.createElement('td');
+  td0.style.cssText = 'font-size:0.62rem;color:#507070;padding:2px 3px;text-align:center';
+  td0.textContent   = rowNum;
+  tr.appendChild(td0);
+  for (let c = 0; c < nCarriers; c++) {
+    const td  = document.createElement('td');
+    const inp = document.createElement('input');
+    inp.type  = 'number';
+    inp.min   = '0';
+    inp.max   = String(maxVal);
+    inp.value = data ? (data[c] !== undefined ? data[c] : 0) : 0;
+    inp.style.cssText = 'width:38px;padding:1px 2px;background:#0a0e1a;color:#c0c8e0;border:1px solid #2a2040;text-align:center;font-size:0.7rem';
+    td.appendChild(inp);
+    tr.appendChild(td);
+  }
+  tbody.appendChild(tr);
+}
+
+function addTableRow_ui() {
+  const bits    = +$('enc-bits').value;
+  const maxVal  = (1 << bits) - 1;
+  const tbody   = $('table-editor').querySelector('tbody');
+  const rowNum  = (tbody ? tbody.querySelectorAll('tr.sym-row').length : 0) + 1;
+  if (!tbody) { buildTableEditor(); return; }
+  _appendTableRow(tbody, rowNum, 8, maxVal, null);
+}
+
+function removeTableRow_ui() {
+  const tbody = $('table-editor').querySelector('tbody');
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll('tr.sym-row');
+  if (rows.length > 1) rows[rows.length - 1].remove();
+}
+
+function readTableSymbols() {
+  const rows = $('table-editor').querySelectorAll('tr.sym-row');
+  const syms = [];
+  rows.forEach(tr => {
+    const row = [];
+    tr.querySelectorAll('input').forEach(inp => row.push(+inp.value || 0));
+    syms.push(row);
+  });
+  return syms;
+}
+
 // ── Encoder apply ─────────────────────────────────────────────────────
 $('enc-apply-btn').addEventListener('click', async () => {
+  const inputMode = $('enc-input-mode').value;
+  const bits      = +$('enc-bits').value;
+  const body = {
+    window_type:      $('enc-window').value,
+    symbol_frames:    +$('enc-sym-frames').value,
+    mod_mode:         $('enc-mod-mode').value,
+    bits_per_carrier: bits,
+    input_mode:       inputMode,
+  };
+  if (inputMode === 'text') {
+    body.message = $('enc-message').value;
+  } else {
+    body.table_symbols = readTableSymbols();
+  }
+  if (body.mod_mode === 'cpm') {
+    body.cpm_h     = +$('enc-cpm-h').value;
+    body.cpm_pulse =  $('enc-cpm-pulse').value;
+  }
   await fetch('/update_encoder', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      message:       $('enc-message').value,
-      window_type:   $('enc-window').value,
-      symbol_frames: +$('enc-sym-frames').value,
-    }),
+    body: JSON.stringify(body),
   });
 });
+
+// ── Decoder modulation toggle ──────────────────────────────────────────
+function onDecModModeChange() {
+  const isCpm = $('dec-mod-mode').value === 'cpm';
+  $('dec-cpm-h-label').style.display = isCpm ? '' : 'none';
+  $('dec-cpm-h').style.display       = isCpm ? '' : 'none';
+}
 
 // ── Decoder settings apply ─────────────────────────────────────────────
 $('dec-apply-btn').addEventListener('click', applyDecoderSettings);
 
 async function applyDecoderSettings() {
   const phaseOffsetRad = (+$('dec-phase-offset').value) * Math.PI / 180;
-  const redMode = $('dec-redundancy').value;
+  const redMode  = $('dec-redundancy').value;
+  const decMod   = $('dec-mod-mode').value;
+  const decBits  = +$('dec-bits').value;
+  const decBody  = {
+    window_type:      $('dec-window').value,
+    phase_offset:     phaseOffsetRad,
+    geo_correction:   geoEnabled,
+    pilot_search_r:   +$('dec-pilot-r').value,
+    temporal_avg:     +$('dec-temporal').value,
+    mag_threshold:    +$('dec-thresh').value / 100,
+    fft_zoom_bins:    +$('dec-zoom').value,
+    phase_nudge:      nudgeValues,
+    redundancy_mode:  redMode,
+    mod_mode:         decMod,
+    bits_per_carrier: decBits,
+  };
+  if (decMod === 'cpm') decBody.cpm_h = +$('dec-cpm-h').value;
   await fetch('/update_decoder', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      window_type:    $('dec-window').value,
-      phase_offset:   phaseOffsetRad,
-      geo_correction: geoEnabled,
-      pilot_search_r: +$('dec-pilot-r').value,
-      temporal_avg:   +$('dec-temporal').value,
-      mag_threshold:  +$('dec-thresh').value / 100,
-      fft_zoom_bins:  +$('dec-zoom').value,
-      phase_nudge:    nudgeValues,
-      redundancy_mode: redMode,
-    }),
+    body: JSON.stringify(decBody),
   });
-  // Sync redundancy mode to encoder so payload structure matches
+  // Sync redundancy mode + bits to encoder so payload structure matches
   await fetch('/update_encoder', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ redundancy_mode: redMode }),
+    body: JSON.stringify({ redundancy_mode: redMode, bits_per_carrier: decBits }),
   });
 }
 
@@ -1989,13 +2170,26 @@ async function pollEncoderState() {
     }
     if (state.cpm_h     !== undefined) $('enc-cpm-h').value     = state.cpm_h;
     if (state.cpm_pulse !== undefined) $('enc-cpm-pulse').value = state.cpm_pulse;
-    // Sync modulation mode UI
-    if (state.mod_mode) {
-      $('enc-mod-mode').value = state.mod_mode;
-      $('cpm-enc-panel').style.display = state.mod_mode === 'cpm' ? 'block' : 'none';
+    // Sync bits-per-carrier and input mode
+    if (state.bits_per_carrier !== undefined) {
+      $('enc-bits').value = state.bits_per_carrier;
+      const maxVal = (1 << state.bits_per_carrier) - 1;
+      $('enc-bits-range').textContent = `0–${maxVal}`;
     }
-    if (state.cpm_h    !== undefined) $('enc-cpm-h').value     = state.cpm_h;
-    if (state.cpm_pulse !== undefined) $('enc-cpm-pulse').value = state.cpm_pulse;
+    if (state.input_mode) {
+      const wasTable = $('enc-input-mode').value === 'table';
+      $('enc-input-mode').value = state.input_mode;
+      if (state.input_mode === 'table' && !wasTable) {
+        $('enc-message-label').style.display = 'none';
+        $('enc-message').style.display       = 'none';
+        $('table-editor-section').style.display = '';
+        buildTableEditor();
+      } else if (state.input_mode === 'text') {
+        $('enc-message-label').style.display = '';
+        $('enc-message').style.display       = '';
+        $('table-editor-section').style.display = 'none';
+      }
+    }
     let html = `<b>Sym ${state.symbol_idx + 1} / ${state.n_symbols}</b>`
              + ` — frame ${state.frame_in_sym} / ${state.symbol_frames}<br>`;
     html += '&nbsp;Bytes carried:&nbsp;';
@@ -2005,7 +2199,7 @@ async function pollEncoderState() {
       html += `<span style="color:${col}">[C${i}: ${b.toString().padStart(3,' ')}`
             + ` @${(ph * 180 / Math.PI).toFixed(0)}°]</span> `;
     });
-    html += `<br>&nbsp;Full payload: [${state.bytes_data.join(', ')}]`;
+    html += `<br>&nbsp;Full payload: [${(state.bytes_data || []).join(', ')}]`;
     $('enc-state').innerHTML = html;
     $('status-enc').textContent = `sym ${state.symbol_idx+1}/${state.n_symbols}`;
   } catch(e) { /* silently ignore */ }

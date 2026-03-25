@@ -27,7 +27,7 @@ from encoder import (
     FRAME_SIZE, PILOT_FREQS, PILOT_PHASE, PILOT_AMPLITUDE,
     DATA_FREQS, DATA_AMPLITUDE, CARRIER_COLOURS, PILOT_COLOUR,
     FFT_ZOOM_BINS, ARROW_LENGTH, FONT,
-    _byte_to_phase, _phase_to_byte, _make_window,
+    _byte_to_phase, _phase_to_byte, _val_to_phase, _phase_to_val, _make_window,
     ARUCO_DICT_ID, ARUCO_MARKER_ID, ARUCO_MARKER_PX, ARUCO_OFFSET_PX, ARUCO_REF_HALF,
     ARUCO_PHYSICAL_SIZE_M,
     _get_redundancy_groups,
@@ -50,6 +50,7 @@ DEFAULT_SETTINGS = {
     "aruco_decode_enabled": False,        # run ArUco-referenced FFT decode path
     "mod_mode":             "psk",        # "psk" | "cpm"
     "cpm_h":                0.5,          # CPM modulation index (must match encoder)
+    "bits_per_carrier":     8,            # 1-8: quantisation levels = 2^bits
 }
 
 
@@ -376,21 +377,48 @@ class DecoderProcessor:
             snr_decode.append(avg_snr)
 
         # ── 8. Decode bytes ──────────────────────────────────────────────────
+        mod_mode = s.get("mod_mode", "psk")
+        cpm_h    = float(s.get("cpm_h", 0.5))
+        bits     = int(s.get("bits_per_carrier", 8))
         bytes_dec = []
-        for ph in phases_decode:
+        for gi, ph in enumerate(phases_decode):
             if ph is None:
                 bytes_dec.append(None)
+                # Reset CPM state for this redundancy group on dropout
+                if mod_mode == "cpm" and gi < len(red_groups):
+                    for ci in red_groups[gi]:
+                        self._cpm_prev_phases[ci] = None
+            elif mod_mode == "cpm":
+                ci      = red_groups[gi][0] if gi < len(red_groups) else gi
+                prev_ph = self._cpm_prev_phases[ci]
+                if prev_ph is None:
+                    b = 0  # first frame after dropout
+                else:
+                    dphi  = (ph - prev_ph + np.pi) % (2 * np.pi) - np.pi
+                    delta = int(round(dphi / (np.pi * cpm_h) * 255))
+                    b     = int((self._cpm_byte_acc[ci] + delta) % 256)
+                    if gi < len(red_groups):
+                        for ci2 in red_groups[gi]:
+                            self._cpm_byte_acc[ci2] = b
+                if gi < len(red_groups):
+                    for ci2 in red_groups[gi]:
+                        self._cpm_prev_phases[ci2] = ph
+                bytes_dec.append(b)
             else:
-                bytes_dec.append(_phase_to_byte(ph))
+                # PSK: level-aware decode using bits_per_carrier
+                bytes_dec.append(_phase_to_val(ph, bits))
 
         ascii_dec = ""
+        maxval = (1 << bits) - 1
         for b in bytes_dec:
             if b is None:
                 ascii_dec += "·"
-            elif 32 <= b <= 126:
+            elif bits == 8 and 32 <= b <= 126:
                 ascii_dec += chr(b)
-            elif b == 0:
+            elif bits == 8 and b == 0:
                 ascii_dec += "∅"
+            elif bits < 8:
+                ascii_dec += str(b) + " "
             else:
                 ascii_dec += f"[{b:02X}]"
 
@@ -468,6 +496,7 @@ class DecoderProcessor:
             "global_phase_offset_deg": float(np.degrees(global_phase_offset)),
             "window_type":    s["window_type"],
             "mod_mode":       s.get("mod_mode", "psk"),
+            "bits_per_carrier": s.get("bits_per_carrier", 8),
             "pose":           pose,
             "aruco_pose":     aruco_pose,
             "aruco_fft_result": aruco_fft_result,

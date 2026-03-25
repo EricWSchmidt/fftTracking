@@ -144,6 +144,29 @@ def _phase_to_byte(phase: float) -> int:
     return int(round(phase / (2.0 * np.pi) * 255)) % 256
 
 
+def _val_to_phase(val: int, bits: int) -> float:
+    """Map integer value 0..(2^bits-1) → [0, 2π).  For bits=8 identical to _byte_to_phase."""
+    levels = (1 << bits) - 1
+    return (val / levels) * 2.0 * np.pi if levels > 0 else 0.0
+
+
+def _phase_to_val(phase: float, bits: int) -> int:
+    """Map phase (any range) → 0..(2^bits-1).  For bits=8 identical to _phase_to_byte."""
+    levels = 1 << bits
+    phase  = phase % (2.0 * np.pi)
+    return int(round(phase / (2.0 * np.pi) * (levels - 1))) % levels
+
+
+def _quantize_to_bits(val: int, bits: int) -> int:
+    """Scale a 0-255 byte value to the nearest of 2^bits quantisation levels.
+    Returns a value in 0..(2^bits-1)."""
+    if bits >= 8:
+        return val
+    levels = 1 << bits
+    q = round(val * (levels - 1) / 255)
+    return min(max(q, 0), levels - 1)
+
+
 def _make_window(size: int, win_type: str) -> np.ndarray:
     if win_type == "blackman":
         w1d = np.blackman(size)
@@ -206,6 +229,8 @@ class Encoder:
         mod_mode:         str   = "psk",
         cpm_h:            float = 0.5,
         cpm_pulse:        str   = "rect",
+        bits_per_carrier: int   = 8,
+        input_mode:       str   = "text",   # "text" | "table"
     ):
         self._lock            = threading.Lock()
         self.message          = message
@@ -215,6 +240,9 @@ class Encoder:
         self._mod_mode        = mod_mode
         self._cpm_h           = float(cpm_h)
         self._cpm_pulse       = cpm_pulse
+        self._bits_per_carrier = max(1, min(8, int(bits_per_carrier)))
+        self._input_mode      = input_mode   # "text" | "table"
+        self._table_symbols   = []           # used when input_mode=="table"
 
         self._build_payload()
         self._window = _make_window(FRAME_SIZE, window_type)
@@ -234,11 +262,31 @@ class Encoder:
         Wrap message in 0x00 sentinels, chunk into symbols, and expand
         each symbol across all carriers according to the redundancy mode.
 
-        With redundancy mode "pairs": 4 unique bytes per symbol, each byte
-        carried by two adjacent carriers.  The carrier-level symbol list
-        always has len(DATA_FREQS) entries.
+        In "table" mode, self._table_symbols is used directly (no sentinel wrapping).
+        In "text" mode with bits_per_carrier < 8, byte values are quantised to
+        2^bits_per_carrier levels so the encoder and decoder share the same grid.
         """
         groups = _get_redundancy_groups(len(DATA_FREQS), self.redundancy_mode)
+        self._redundancy_groups = groups
+
+        # ── Table mode: raw symbols supplied directly by the user ──────────
+        if self._input_mode == "table":
+            n = len(DATA_FREQS)
+            bits    = self._bits_per_carrier
+            maxval  = (1 << bits) - 1
+            clean   = []
+            for row in (self._table_symbols or []):
+                sym = [max(0, min(maxval, int(v))) for v in list(row)[:n]]
+                while len(sym) < n: sym.append(0)
+                clean.append(sym)
+            if not clean:
+                clean = [[0] * n]
+            self.symbols    = clean
+            self.n_symbols  = len(clean)
+            self.bytes_data = []
+            return
+
+        # ── Text mode ──────────────────────────────────────────────────────
         n_eff  = len(groups)   # effective bytes per symbol
 
         raw = [0] + list(self.message.encode("utf-8")) + [0]
@@ -257,10 +305,15 @@ class Encoder:
                     carr[c_idx] = eff_bytes[g_idx]
             carrier_symbols.append(carr)
 
+        # Quantise to bits_per_carrier resolution (no-op when bits==8)
+        if self._bits_per_carrier < 8:
+            carrier_symbols = [
+                [_quantize_to_bits(b, self._bits_per_carrier) for b in sym]
+                for sym in carrier_symbols
+            ]
+
         self.symbols   = carrier_symbols
         self.n_symbols = len(carrier_symbols)
-        # Groups exposed for decoder sync
-        self._redundancy_groups = groups
 
     # -------------------------------------------------------------- accessors
     def update_message(self, message: str):
@@ -308,6 +361,39 @@ class Encoder:
             self._build_payload()
             self._frame_counter = 0
 
+    def update_bits_per_carrier(self, bits: int, input_mode: str = None):
+        """Change quantisation depth (1-8 bits) at runtime and rebuild payload."""
+        with self._lock:
+            self._bits_per_carrier = max(1, min(8, int(bits)))
+            if input_mode is not None:
+                self._input_mode = input_mode
+            self._build_payload()
+            self._frame_counter = 0
+            # Reset CPM accumulators — phase scale has changed
+            n = len(DATA_FREQS)
+            self._cpm_acc        = np.zeros(n, dtype=np.float64)
+            self._cpm_prev_bytes = np.zeros(n, dtype=np.float64)
+
+    def update_table_symbols(self, table_symbols: list):
+        """Set raw carrier-value table directly (switches to table input mode)."""
+        with self._lock:
+            n      = len(DATA_FREQS)
+            bits   = self._bits_per_carrier
+            maxval = (1 << bits) - 1
+            clean  = []
+            for row in table_symbols:
+                sym = [max(0, min(maxval, int(v))) for v in list(row)[:n]]
+                while len(sym) < n: sym.append(0)
+                clean.append(sym)
+            if not clean:
+                clean = [[0] * n]
+            self._table_symbols = clean
+            self._input_mode    = "table"
+            self.symbols        = clean
+            self.n_symbols      = len(clean)
+            self.bytes_data     = []
+            self._frame_counter = 0
+
     # ── CPM helpers (called inside next_frame while lock is held) ──────────
     def _cpm_phases(self, byte_vals: np.ndarray, frame_in_symbol: int) -> np.ndarray:
         """Instantaneous CPM phase at frame_in_symbol within the current symbol.
@@ -333,7 +419,7 @@ class Encoder:
             sidx   = fidx // self.symbol_frames
             finsy  = fidx  % self.symbol_frames
             sym    = self.symbols[sidx]
-            phases = [_byte_to_phase(b) for b in sym]
+            phases = [_val_to_phase(b, self._bits_per_carrier) for b in sym]
             return {
                 "message":            self.message,
                 "bytes_data":         self.bytes_data,
@@ -352,6 +438,8 @@ class Encoder:
                 "mod_mode":           self._mod_mode,
                 "cpm_h":              self._cpm_h,
                 "cpm_pulse":          self._cpm_pulse,
+                "bits_per_carrier":   self._bits_per_carrier,
+                "input_mode":         self._input_mode,
             }
 
     def set_bg_frame(self, frame, opacity: float = 1.0):
@@ -404,9 +492,9 @@ class Encoder:
                 raw_phases = self._cpm_phases(cur_bytes, finsy)
             else:
                 # PSK: static phase with complex-plane blend near symbol end
-                raw_phases = np.array([_byte_to_phase(b) for b in cur_sym])
+                raw_phases = np.array([_val_to_phase(b, self._bits_per_carrier) for b in cur_sym])
                 if blend > 0:
-                    nxt_phases = np.array([_byte_to_phase(b) for b in nxt_sym])
+                    nxt_phases = np.array([_val_to_phase(b, self._bits_per_carrier) for b in nxt_sym])
                     z = ((1.0 - blend) * np.exp(1j * raw_phases)
                          + blend       * np.exp(1j * nxt_phases))
                     raw_phases = np.angle(z)

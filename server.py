@@ -131,6 +131,8 @@ def encoder_state():
         "mod_mode":       state.get("mod_mode", "psk"),
         "cpm_h":          state.get("cpm_h", 0.5),
         "cpm_pulse":      state.get("cpm_pulse", "rect"),
+        "bits_per_carrier": state.get("bits_per_carrier", 8),
+        "input_mode":     state.get("input_mode", "text"),
     }
     return jsonify(_to_python(out))
 
@@ -156,6 +158,15 @@ def update_encoder():
             cpm_h    = body.get("cpm_h"),
             cpm_pulse= body.get("cpm_pulse"),
         )
+    if "bits_per_carrier" in body or "input_mode" in body:
+        enc.update_bits_per_carrier(
+            body.get("bits_per_carrier", enc._bits_per_carrier),
+            input_mode = body.get("input_mode"),
+        )
+    if "table_symbols" in body:
+        table = body["table_symbols"]
+        if isinstance(table, list):
+            enc.update_table_symbols(table)
     return jsonify({"status": "ok"})
 
 
@@ -261,6 +272,7 @@ def update_decoder():
         "aruco_decode_enabled": bool,
         "mod_mode":             str,
         "cpm_h":                float,
+        "bits_per_carrier":     int,
     }
     patch = {}
     for k, T in allowed.items():
