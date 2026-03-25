@@ -154,6 +154,27 @@ def _make_window(size: int, win_type: str) -> np.ndarray:
     return np.outer(w1d, w1d)
 
 
+def _cpm_pulse_kernel(shape: str, symbol_frames: int) -> np.ndarray:
+    """
+    Unit-area pulse shaping kernel of length symbol_frames.
+    rect  – flat (classical CPFSK)
+    rc    – raised cosine (smoother, less splatter)
+    gaussian – GMSK-equivalent BT=0.3 (most compact spectrum)
+    """
+    t = np.arange(symbol_frames) / max(1, symbol_frames)
+    if shape == "rc":
+        g = 1.0 - np.cos(np.pi * t)
+        g /= g.sum()
+    elif shape == "gaussian":
+        BT    = 0.3
+        sigma = np.sqrt(np.log(2)) / (2 * np.pi * BT)
+        g     = np.exp(-0.5 * ((t - 0.5) / sigma) ** 2)
+        g    /= g.sum()
+    else:   # rect
+        g = np.ones(symbol_frames) / max(1, symbol_frames)
+    return g.astype(np.float64)
+
+
 def _get_redundancy_groups(n_carriers: int, mode: str) -> list[list[int]]:
     """
     Return a list of carrier-index groups that share the same encoded byte.
@@ -178,22 +199,34 @@ class Encoder:
 
     def __init__(
         self,
-        message:          str  = "Google.com",
-        window_type:      str  = "hann",
-        symbol_frames:    int  = SYMBOL_FRAMES,
-        redundancy_mode:  str  = "none",
+        message:          str   = "Google.com",
+        window_type:      str   = "hann",
+        symbol_frames:    int   = SYMBOL_FRAMES,
+        redundancy_mode:  str   = "none",
+        mod_mode:         str   = "psk",
+        cpm_h:            float = 0.5,
+        cpm_pulse:        str   = "rect",
     ):
         self._lock            = threading.Lock()
         self.message          = message
         self.window_type      = window_type
         self.symbol_frames    = symbol_frames
         self.redundancy_mode  = redundancy_mode
+        self._mod_mode        = mod_mode
+        self._cpm_h           = float(cpm_h)
+        self._cpm_pulse       = cpm_pulse
 
         self._build_payload()
         self._window = _make_window(FRAME_SIZE, window_type)
-        self._frame_counter = 0
-        self._bg_frame   = None   # optional BGR ndarray (any size)
-        self._bg_opacity = 1.0    # 1.0 = pure signal, 0.0 = pure video bg
+        self._frame_counter  = 0
+        self._bg_frame       = None
+        self._bg_opacity     = 1.0
+        # CPM accumulators — one per data carrier
+        n = len(DATA_FREQS)
+        self._cpm_acc        = np.zeros(n, dtype=np.float64)
+        self._cpm_prev_bytes = np.zeros(n, dtype=np.float64)
+        self._cpm_kernel     = _cpm_pulse_kernel(cpm_pulse, symbol_frames)
+        self._cpm_cumint     = np.cumsum(self._cpm_kernel)
 
     # ------------------------------------------------------------------ build
     def _build_payload(self):
@@ -252,12 +285,46 @@ class Encoder:
                 self._build_payload()
                 self._frame_counter = 0
 
+    def update_mod_mode(self, mod_mode: str,
+                        cpm_h: float = None,
+                        cpm_pulse: str = None):
+        """Switch between PSK and CPM at runtime and reset CPM state."""
+        with self._lock:
+            self._mod_mode = mod_mode
+            if cpm_h    is not None: self._cpm_h    = float(cpm_h)
+            if cpm_pulse is not None:
+                self._cpm_pulse  = cpm_pulse
+                self._cpm_kernel = _cpm_pulse_kernel(self._cpm_pulse,
+                                                      self.symbol_frames)
+                self._cpm_cumint = np.cumsum(self._cpm_kernel)
+            self._cpm_acc        = np.zeros(len(DATA_FREQS), dtype=np.float64)
+            self._cpm_prev_bytes = np.zeros(len(DATA_FREQS), dtype=np.float64)
+            self._frame_counter  = 0
+
     def update_freqs(self, data_freqs=None, pilot_freqs=None):
         """Update DATA_FREQS / PILOT_FREQS globally and rebuild payload."""
         update_freq_bins(data_freqs, pilot_freqs)
         with self._lock:
             self._build_payload()
             self._frame_counter = 0
+
+    # ── CPM helpers (called inside next_frame while lock is held) ──────────
+    def _cpm_phases(self, byte_vals: np.ndarray, frame_in_symbol: int) -> np.ndarray:
+        """Instantaneous CPM phase at frame_in_symbol within the current symbol.
+
+        φ(n) = φ_acc + π·h·Δb·∫₀ⁿ g(τ)dτ
+        """
+        n       = min(frame_in_symbol, len(self._cpm_cumint) - 1)
+        cumint  = self._cpm_cumint[n]
+        delta   = byte_vals - self._cpm_prev_bytes
+        return self._cpm_acc + np.pi * self._cpm_h * delta * cumint
+
+    def _advance_cpm(self, byte_vals: np.ndarray):
+        """Update CPM accumulators at the end of a symbol."""
+        delta             = byte_vals - self._cpm_prev_bytes
+        self._cpm_acc     = (self._cpm_acc +
+                             np.pi * self._cpm_h * delta) % (2 * np.pi)
+        self._cpm_prev_bytes = byte_vals.copy()
 
     def get_state(self) -> dict:
         with self._lock:
@@ -282,6 +349,9 @@ class Encoder:
                 "data_freqs":         DATA_FREQS,
                 "redundancy_mode":    self.redundancy_mode,
                 "redundancy_groups":  self._redundancy_groups,
+                "mod_mode":           self._mod_mode,
+                "cpm_h":              self._cpm_h,
+                "cpm_pulse":          self._cpm_pulse,
             }
 
     def set_bg_frame(self, frame, opacity: float = 1.0):
@@ -320,14 +390,30 @@ class Encoder:
                 F[fy % N, fx % N]        += amp * np.exp( 1j * ph)
                 F[(-fy) % N, (-fx) % N]  += amp * np.exp(-1j * ph)  # Hermitian
 
+            # ---- CPM accumulator advance at symbol boundary ----
+            if finsy == 0 and self._frame_counter > 0 and self._mod_mode == "cpm":
+                prev_sidx  = ((self._frame_counter - 1) //
+                              self.symbol_frames) % self.n_symbols
+                prev_bytes = np.array(self.symbols[prev_sidx], dtype=np.float64)
+                self._advance_cpm(prev_bytes)
+
             # ---- data carriers ----
+            cur_bytes = np.array(cur_sym, dtype=np.float64)
+            if self._mod_mode == "cpm":
+                # CPM: instantaneous phase from accumulator + pulse integral
+                raw_phases = self._cpm_phases(cur_bytes, finsy)
+            else:
+                # PSK: static phase with complex-plane blend near symbol end
+                raw_phases = np.array([_byte_to_phase(b) for b in cur_sym])
+                if blend > 0:
+                    nxt_phases = np.array([_byte_to_phase(b) for b in nxt_sym])
+                    z = ((1.0 - blend) * np.exp(1j * raw_phases)
+                         + blend       * np.exp(1j * nxt_phases))
+                    raw_phases = np.angle(z)
+
             active_phases = []
             for i, (fy, fx) in enumerate(DATA_FREQS):
-                ph_c = _byte_to_phase(cur_sym[i])
-                ph_n = _byte_to_phase(nxt_sym[i])
-                # interpolate in complex plane (handles wrap-around)
-                z = (1.0 - blend) * np.exp(1j * ph_c) + blend * np.exp(1j * ph_n)
-                ph = float(np.angle(z))
+                ph  = float(raw_phases[i])
                 active_phases.append(ph)
                 amp = DATA_AMPLITUDE
                 F[fy % N, fx % N]        += amp * np.exp( 1j * ph)

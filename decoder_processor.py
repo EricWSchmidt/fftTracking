@@ -48,6 +48,8 @@ DEFAULT_SETTINGS = {
     "phase_nudge":          [0.0] * len(DATA_FREQS),  # per-carrier phase trim
     "redundancy_mode":      "none",       # "none"|"pairs"|"quads"|"all8"
     "aruco_decode_enabled": False,        # run ArUco-referenced FFT decode path
+    "mod_mode":             "psk",        # "psk" | "cpm"
+    "cpm_h":                0.5,          # CPM modulation index (must match encoder)
 }
 
 
@@ -140,6 +142,9 @@ class DecoderProcessor:
         self._lock    = threading.Lock()
         self.settings = dict(DEFAULT_SETTINGS)
         self.settings["phase_nudge"] = [0.0] * len(DATA_FREQS)
+        # CPM decoder state — accumulated byte and previous phase per carrier
+        self._cpm_prev_phases = [None] * len(DATA_FREQS)
+        self._cpm_byte_acc    = [0]    * len(DATA_FREQS)
         # Ring buffer for temporal averaging
         self._avg_buffer: list[np.ndarray] = []   # list of complex F_shift arrays
         # Ring buffer for multi-symbol message reconstruction
@@ -462,6 +467,7 @@ class DecoderProcessor:
             "redundancy_groups": [list(g) for g in red_groups],
             "global_phase_offset_deg": float(np.degrees(global_phase_offset)),
             "window_type":    s["window_type"],
+            "mod_mode":       s.get("mod_mode", "psk"),
             "pose":           pose,
             "aruco_pose":     aruco_pose,
             "aruco_fft_result": aruco_fft_result,

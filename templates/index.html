@@ -537,6 +537,32 @@
         <option value="none">None (rectangular)</option>
       </select>
 
+      <label>Modulation</label>
+      <select id="enc-mod-mode" style="grid-column:2/4" onchange="onEncModModeChange()">
+        <option value="psk" selected>PSK — Phase Shift Keying</option>
+        <option value="cpm">CPM — Continuous Phase Modulation</option>
+      </select>
+    </div>
+    <!-- CPM sub-panel (hidden unless CPM selected) -->
+    <div id="cpm-enc-panel" style="display:none;background:#090c16;border:1px solid #2a2040;border-radius:5px;padding:6px 10px;margin:4px 0">
+      <div class="settings-grid">
+        <label>Modulation index <i>h</i></label>
+        <input type="number" id="enc-cpm-h" value="0.5" min="0.05" max="2.0" step="0.05" style="width:64px">
+        <span class="val-label">0.5 = MSK</span>
+
+        <label>Pulse shape</label>
+        <select id="enc-cpm-pulse" style="grid-column:2/4">
+          <option value="rect" selected>Rectangular (CPFSK)</option>
+          <option value="rc">Raised Cosine</option>
+          <option value="gaussian">Gaussian BT=0.3 (GMSK)</option>
+        </select>
+      </div>
+      <div style="font-size:0.68rem;color:#c08020;margin-top:4px;line-height:1.5">
+        ⚠ CPM requires an unbroken frame sequence. Any dropped frame permanently
+        desynchronises all subsequent symbols. Only use CPM on a lossless local display.
+      </div>
+    </div>
+    <div class="settings-grid">
       <label>Symbol duration</label>
       <input type="range" id="enc-sym-frames" min="15" max="300" step="5" value="90">
       <span class="val-label" id="enc-sym-frames-val">90 fr</span>
@@ -834,6 +860,17 @@
         <option value="quads">Quads (2 bytes × 4 carriers each)</option>
         <option value="all8">All-8 (1 byte × 8 carriers)</option>
       </select>
+
+      <label>Modulation</label>
+      <select id="dec-mod-mode" style="grid-column:2/4" onchange="onDecModModeChange()">
+        <option value="psk" selected>PSK</option>
+        <option value="cpm">CPM</option>
+      </select>
+
+      <label id="dec-cpm-h-label" style="display:none">CPM <i>h</i> (decoder)</label>
+      <input type="number" id="dec-cpm-h" value="0.5" min="0.05" max="2.0" step="0.05"
+             style="display:none;width:64px;grid-column:2/4">
+      <span></span>
     </div>
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
@@ -1945,6 +1982,20 @@ async function pollEncoderState() {
     // Capture defaults once
     if (!DEFAULT_DATA_FREQS && state.data_freqs)   DEFAULT_DATA_FREQS  = state.data_freqs.map(f => [...f]);
     if (!DEFAULT_PILOT_FREQS && state.pilot_freqs) DEFAULT_PILOT_FREQS = state.pilot_freqs.map(f => [...f]);
+    // Sync modulation mode UI
+    if (state.mod_mode) {
+      $('enc-mod-mode').value = state.mod_mode;
+      $('cpm-enc-panel').style.display = state.mod_mode === 'cpm' ? 'block' : 'none';
+    }
+    if (state.cpm_h     !== undefined) $('enc-cpm-h').value     = state.cpm_h;
+    if (state.cpm_pulse !== undefined) $('enc-cpm-pulse').value = state.cpm_pulse;
+    // Sync modulation mode UI
+    if (state.mod_mode) {
+      $('enc-mod-mode').value = state.mod_mode;
+      $('cpm-enc-panel').style.display = state.mod_mode === 'cpm' ? 'block' : 'none';
+    }
+    if (state.cpm_h    !== undefined) $('enc-cpm-h').value     = state.cpm_h;
+    if (state.cpm_pulse !== undefined) $('enc-cpm-pulse').value = state.cpm_pulse;
     let html = `<b>Sym ${state.symbol_idx + 1} / ${state.n_symbols}</b>`
              + ` — frame ${state.frame_in_sym} / ${state.symbol_frames}<br>`;
     html += '&nbsp;Bytes carried:&nbsp;';

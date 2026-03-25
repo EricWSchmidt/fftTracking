@@ -128,6 +128,9 @@ def encoder_state():
         "bytes_data":     state["bytes_data"],
         "pilot_freqs":    [list(f) for f in PILOT_FREQS],
         "data_freqs":     [list(f) for f in DATA_FREQS],
+        "mod_mode":       state.get("mod_mode", "psk"),
+        "cpm_h":          state.get("cpm_h", 0.5),
+        "cpm_pulse":      state.get("cpm_pulse", "rect"),
     }
     return jsonify(_to_python(out))
 
@@ -147,6 +150,12 @@ def update_encoder():
             pass
     if "redundancy_mode" in body:
         enc.update_redundancy_mode(str(body["redundancy_mode"]))
+    if "mod_mode" in body or "cpm_h" in body or "cpm_pulse" in body:
+        enc.update_mod_mode(
+            body.get("mod_mode",   enc._mod_mode),
+            cpm_h    = body.get("cpm_h"),
+            cpm_pulse= body.get("cpm_pulse"),
+        )
     return jsonify({"status": "ok"})
 
 
@@ -250,6 +259,8 @@ def update_decoder():
         "phase_nudge":          list,
         "redundancy_mode":      str,
         "aruco_decode_enabled": bool,
+        "mod_mode":             str,
+        "cpm_h":                float,
     }
     patch = {}
     for k, T in allowed.items():
